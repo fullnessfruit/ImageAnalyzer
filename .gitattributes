@@ -1,2 +1,0 @@
-# Keep LF line endings on all platforms (do not convert to CRLF on Windows checkout)
-* text=auto eol=lf
