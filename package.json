@@ -1,0 +1,32 @@
+{
+  "name": "image-analyzer",
+  "version": "1.0.0",
+  "description": "Local API server for image analysis: OCR, character recognition, and face recognition",
+  "main": "server/dist/index.js",
+  "scripts": {
+    "build": "tsc -p server/tsconfig.json",
+    "server": "npm run build && node server/dist/index.js",
+    "dev": "npx nodemon --watch server/src --ext ts --exec \"npm run build && node server/dist/index.js\"",
+    "register:characters": "npx ts-node scripts/register-characters.ts",
+    "register:faces": "npx ts-node scripts/register-faces.ts",
+    "register:costumes": "npx ts-node scripts/register-costumes.ts",
+    "register:persons": "npx ts-node scripts/register-persons.ts",
+    "register:all": "npm run register:characters && npm run register:faces && npm run register:costumes && npm run register:persons"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.0.0",
+    "express": "^4.21.0",
+    "multer": "^1.4.5-lts.1",
+    "onnxruntime-node": "^1.19.0",
+    "sharp": "^0.33.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.0",
+    "@types/express": "^4.17.21",
+    "@types/multer": "^1.4.12",
+    "@types/node": "^22.0.0",
+    "nodemon": "^3.1.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.5.0"
+  }
+}
