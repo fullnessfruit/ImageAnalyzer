@@ -27,6 +27,7 @@ function loadConfig(): Config {
       ocr: { ...DEFAULT_CONFIG.ocr, ...(raw.ocr ?? {}) },
       wdTagger: { ...DEFAULT_CONFIG.wdTagger, ...(raw.wdTagger ?? {}) },
       characterAliases: { ...DEFAULT_CONFIG.characterAliases, ...(raw.characterAliases ?? {}) },
+      candidates: { ...DEFAULT_CONFIG.candidates, ...(raw.candidates ?? {}) },
     };
   } catch {
     return DEFAULT_CONFIG;
@@ -68,6 +69,7 @@ async function main() {
     console.log(`  ocr.found    : ${JSON.stringify(result.ocr.found)}`);
     console.log(`  ocr.text     : ${result.ocr.fullText.slice(0, 200)}`);
     console.log(`  faces        : ${result.faces.map((m) => `${m.name}(${m.score})`).join(", ") || "-"}`);
+    console.log(`  facesWeak    : ${result.facesWeak.map((m) => `${m.name}(${m.score})`).join(", ") || "-"}`);
     console.log(`  characters   : ${result.characters.map((m) => `${m.name}[${m.source}](${m.score})`).join(", ") || "-"}`);
     console.log(`  costumes     : ${result.costumes.map((m) => `${m.name}(${m.score})`).join(", ") || "-"}`);
     console.log(`  elapsed      : ${result._elapsedMs}ms`);

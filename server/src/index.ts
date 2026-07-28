@@ -37,6 +37,7 @@ export function loadConfig(): Config {
       ocr: { ...DEFAULT_CONFIG.ocr, ...(raw.ocr ?? {}) },
       wdTagger: { ...DEFAULT_CONFIG.wdTagger, ...(raw.wdTagger ?? {}) },
       characterAliases: { ...DEFAULT_CONFIG.characterAliases, ...(raw.characterAliases ?? {}) },
+      candidates: { ...DEFAULT_CONFIG.candidates, ...(raw.candidates ?? {}) },
     };
   } catch (e: any) {
     console.warn(`⚠️  Config load failed - path: ${CONFIG_PATH}, error: ${e.message} (기본값 사용)`);

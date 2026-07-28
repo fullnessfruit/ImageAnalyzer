@@ -35,6 +35,19 @@ export function initDB(dbDir: string): Database.Database {
       UNIQUE (kind, image_path)
     );
     CREATE INDEX IF NOT EXISTS idx_embeddings_lookup ON embeddings (kind, space);
+
+    CREATE TABLE IF NOT EXISTS candidates (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      kind TEXT NOT NULL,
+      space TEXT NOT NULL,
+      name TEXT NOT NULL,
+      file_path TEXT NOT NULL UNIQUE,
+      embedding BLOB NOT NULL,
+      score REAL NOT NULL,
+      source TEXT NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_candidates_lookup ON candidates (kind, name);
   `);
 
   console.log(`✅ Database initialized - path: ${dbPath}`);
@@ -122,4 +135,82 @@ export function getGallery(kind: Kind, space: Space): GalleryEntry[] {
 export function countEmbeddings(kind: Kind): number {
   const row = getDB().prepare(`SELECT COUNT(*) AS n FROM embeddings WHERE kind = ?`).get(kind) as { n: number };
   return row.n;
+}
+
+// ============================================================
+// 후보 수집
+// ============================================================
+
+/**
+ * 확정 매칭된 크롭을 갤러리에 바로 넣지 않고 후보로 모아둔다.
+ *
+ * 자동 등록을 하지 않는 이유 — 잘못 들어간 항목이 조용히 이후 매칭을 바꾸고, 되돌리려면
+ * 어느 항목이 잘못됐는지 알아야 한다. 그런데 분석 중 잘라낸 크롭은 디스크에 파일이 없어
+ * 눈으로 확인할 수가 없다. 결국 전부 지우는 맹목 롤백밖에 남지 않는다.
+ * 후보를 파일로 남기고 사람이 추려서 data/ 로 옮기면 갤러리에는 승인된 것만 들어간다.
+ * 여기엔 학습이 없고 등록 = 임베딩 추출이라 검토 후 등록 비용이 사실상 없다.
+ */
+export interface CandidateRow {
+  id: number;
+  kind: string;
+  name: string;
+  file_path: string;
+  score: number;
+  source: string;
+  created_at: string;
+}
+
+/** 같은 신원의 기존 후보 임베딩. 중복 판정에 쓴다. */
+export function getCandidateVectors(kind: Kind, name: string): Float32Array[] {
+  const rows = getDB()
+    .prepare(`SELECT embedding FROM candidates WHERE kind = ? AND name = ?`)
+    .all(kind, name) as { embedding: Buffer }[];
+  return rows.map((r) => l2normalize(bufferToFloat32(r.embedding)));
+}
+
+export function countCandidates(kind: Kind, name: string): number {
+  const row = getDB()
+    .prepare(`SELECT COUNT(*) AS n FROM candidates WHERE kind = ? AND name = ?`)
+    .get(kind, name) as { n: number };
+  return row.n;
+}
+
+export function insertCandidate(
+  kind: Kind,
+  space: Space,
+  name: string,
+  filePath: string,
+  embedding: Float32Array,
+  score: number,
+  source: string,
+): void {
+  getDB()
+    .prepare(
+      `INSERT OR IGNORE INTO candidates (kind, space, name, file_path, embedding, score, source)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(kind, space, name, filePath, Buffer.from(embedding.buffer, embedding.byteOffset, embedding.byteLength), score, source);
+}
+
+export function listCandidates(kind?: Kind, name?: string): CandidateRow[] {
+  const where: string[] = [];
+  const args: string[] = [];
+  if (kind) { where.push("kind = ?"); args.push(kind); }
+  if (name) { where.push("name = ?"); args.push(name); }
+  const sql = `SELECT id, kind, name, file_path, score, source, created_at FROM candidates
+               ${where.length ? "WHERE " + where.join(" AND ") : ""} ORDER BY kind, name, score DESC`;
+  return getDB().prepare(sql).all(...args) as CandidateRow[];
+}
+
+export function deleteCandidateByPath(filePath: string): void {
+  getDB().prepare(`DELETE FROM candidates WHERE file_path = ?`).run(filePath);
+}
+
+export function deleteCandidates(kind?: Kind, name?: string): number {
+  const where: string[] = [];
+  const args: string[] = [];
+  if (kind) { where.push("kind = ?"); args.push(kind); }
+  if (name) { where.push("name = ?"); args.push(name); }
+  const sql = `DELETE FROM candidates ${where.length ? "WHERE " + where.join(" AND ") : ""}`;
+  return getDB().prepare(sql).run(...args).changes;
 }

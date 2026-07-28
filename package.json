@@ -12,6 +12,7 @@
     "register:faces": "npx ts-node scripts/register.ts face",
     "register:characters": "npx ts-node scripts/register.ts character",
     "register:costumes": "npx ts-node scripts/register.ts costume",
+    "candidates": "npx ts-node scripts/candidates.ts",
     "search-strings": "npx ts-node scripts/search-strings.ts",
     "tags": "npx ts-node scripts/tags.ts",
     "detect": "npx ts-node scripts/detect.ts"

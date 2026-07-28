@@ -163,6 +163,9 @@ data/faces/*
 !data/costumes/.gitkeep
 !data/faces/.gitkeep
 
+# Crops collected during analysis, pending review (npm run candidates)
+data/_candidates/
+
 # Local test images (third-party material, not for distribution)
 sample/
 

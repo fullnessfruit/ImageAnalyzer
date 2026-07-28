@@ -27,8 +27,15 @@ lands far away while different characters with similar attributes land close.
 | Task | Model | Registration needed |
 |---|---|---|
 | Real-person face | SCRFD landmarks → 5-point similarity warp → ArcFace w600k_r50 (flip TTA) | 1–3 photos per person |
-| Anime character | WD-Tagger v3 (zero-shot names) + CCIP (gallery) | 0 for known characters, 1–2 otherwise |
+| Anime character | CCIP (gallery), corroborated by WD-Tagger v3 | 1–2 images per character |
 | Anime costume | WD-Tagger clothing tags, IDF-weighted, head masked | 1 image per costume |
+
+**Only registered characters are reported.** CCIP carries identity: it is trained with the same
+character across different artists and styles as positives, so a single registered image matches the
+character in a different outfit and a different rendering (measured: 0.85 and 0.87 from one reference).
+WD-Tagger is a corroborating signal only — its vocabulary is a fixed ~2,751 characters and it does not
+know newer ones at all (none of the twelve Hasunosora characters are present), so any name it emits is
+filtered against the gallery.
 
 ArcFace is trained only on faces warped to a canonical 5-point template, so landmark alignment is
 mandatory — feeding a raw bounding-box crop puts every input out of distribution.
@@ -79,8 +86,9 @@ curl -X POST http://localhost:3000/analyze -F "image=@test.jpg"
     "regions": 19,
     "fullText": "debug greedy decode, not used for matching"
   },
-  "faces":      [{ "name": "大西亜玖璃", "score": 0.6394, "margin": 0.6394, "box": [x, y, w, h] }],
-  "characters": [{ "name": "上原歩夢", "score": 0.9639, "margin": 0, "source": "tagger" }],
+  "faces":      [{ "name": "大西亜玖璃", "score": 0.7854, "margin": 0.7854, "box": [x, y, w, h] }],
+  "facesWeak":  [{ "name": "大西亜玖璃", "score": 0.3221, "margin": 0.3221, "box": [x, y, w, h] }],
+  "characters": [{ "name": "上原歩夢", "score": 0.8731, "margin": 0.8731, "source": "ccip" }],
   "costumes":   [{ "name": "虹ヶ咲制服", "score": 1.0, "margin": 1.0, "source": "blazer,skirt,..." }],
   "_detections": { "realFaces": 2, "animeFaces": 2, "animePersons": 2, "textRegions": 19 },
   "_elapsedMs": 30607
@@ -95,17 +103,28 @@ curl -X POST http://localhost:3000/analyze -F "image=@test.jpg"
 
 ```json
 {
-  "similarityThreshold": { "face": 0.28, "character": 0.82, "costume": 0.55 },
+  "similarityThreshold": { "face": 0.45, "faceWeak": 0.28, "character": 0.82, "costume": 0.55 },
   "margin":              { "face": 0.06, "character": 0.04, "costume": 0.05 },
   "ocr":                 { "scoreThreshold": 0.5, "detScales": [960, 1600] },
   "wdTagger":            { "characterTagThreshold": 0.6 },
-  "characterAliases":    { "uehara_ayumu": "上原歩夢" }
+  "characterAliases":    { "uehara_ayumu": "上原歩夢" },
+  "candidates":          { "enabled": true, "dedupThreshold": 0.95, "maxPerName": 50 }
 }
 ```
 
-Thresholds are **not comparable across tasks** — each model has its own cosine distribution. The face
-value of 0.28 is empirical: same person scores 0.64–0.79, a photographed photo of them 0.32, a
-different person 0.15. A value like 0.8 rejects even genuine matches.
+Thresholds are **not comparable across tasks** — each model has its own cosine distribution. A value
+like 0.8, reasonable for CCIP, rejects every genuine ArcFace match.
+
+Faces are reported in two bands so that a photographed photo is not accepted as the real thing but is
+not silently dropped either. Measured on one image containing both: the live subject scores 0.7854 and
+lands in `faces`; the framed photo of her scores 0.3221 and lands in `facesWeak`; a different person
+scores 0.1474 and is not reported at all.
+
+| Band | Range | Meaning |
+|---|---|---|
+| `faces` | ≥ `face` (0.45) | accepted as the real subject |
+| `facesWeak` | `faceWeak` … `face` | photographed photo or degraded capture — do not act on automatically |
+| — | < `faceWeak` (0.28) | not reported |
 
 A match must clear both the absolute threshold and the **top-1 minus top-2 margin**. If top-1 and
 top-2 are close, the match is meaningless regardless of its absolute score, and reporting "unknown"
@@ -127,6 +146,32 @@ so **any one list matching** counts as a hit.
 npm run search-strings -- --add "大西亜玖璃"
 npm run search-strings -- --list
 ```
+
+## Growing the gallery
+
+Nothing is ever added to the gallery automatically. When a crop matches a registered identity with
+confidence, the crop is written to `data/_candidates/<kind>/<name>/` and recorded separately — the
+gallery itself is untouched. You review the folder and promote what is worth keeping.
+
+```bash
+npm run candidates -- --list                      # what has been collected
+npm run candidates -- --promote face 大西亜玖璃    # move into data/faces/大西亜玖璃/
+npm run register:faces                            # actually register
+npm run candidates -- --clear                     # discard everything collected
+```
+
+Auto-registration was rejected deliberately: a wrong entry silently changes later matching and feeds
+the next wrong entry, and since the crop exists only in memory there would be nothing to inspect —
+the only possible undo is deleting every auto entry blindly. Reviewing costs almost nothing here
+because there is no training; registering is embedding extraction into SQLite.
+
+Unmatched crops are not collected. The purpose is to broaden coverage of identities you already
+registered, and for faces only the `faces` band is collected — a photographed photo must not end up
+in the gallery. For characters the most valuable candidate is one WD-Tagger confirms but CCIP misses,
+since that is exactly a rendering CCIP does not yet cover.
+
+Runaway collection is bounded by `dedupThreshold` (skip anything within 0.95 cosine of an existing
+candidate — the embedding is already computed, so this is free) and `maxPerName`.
 
 ## Diagnostics
 
