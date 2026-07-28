@@ -56,9 +56,26 @@ git -c user.name="%GIT_USER_NAME%" -c user.email="%GIT_USER_EMAIL%" commit -m "%
 :do_push
 echo.
 set CLEAN_URL=https://github.com/%GITHUB_REPO%.git
+
+rem Get current branch name
+for /f "delims=" %%b in ('git rev-parse --abbrev-ref HEAD') do set CURRENT_BRANCH=%%b
+
+if "%CURRENT_BRANCH%"=="" (
+    echo Failed to detect current branch.
+    pause
+    exit /b 1
+)
+
+if "%CURRENT_BRANCH%"=="HEAD" (
+    echo Detached HEAD state - cannot push. Checkout a branch first.
+    pause
+    exit /b 1
+)
+
+echo Pushing branch: %CURRENT_BRANCH%
 git remote set-url origin "%REMOTE_URL%" 2> nul
 rem Disable all credential helpers for this push so the PAT is not saved to Windows Credential Manager
-git -c credential.helper= push -u origin main
+git -c credential.helper= push -u origin "%CURRENT_BRANCH%"
 git remote set-url origin "%CLEAN_URL%"
 pause
 exit /b 0
