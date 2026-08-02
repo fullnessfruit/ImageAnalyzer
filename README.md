@@ -17,8 +17,9 @@ re-identification. Those are out of scope by design.
 of decoding text and comparing substrings, each candidate string is scored directly against the CTC
 probability lattice. A greedy decode picks the top class at every timestep and its exact-match
 probability decays as the L-th power of per-character accuracy; lattice scoring survives a character
-being pushed to second place. Observed: a region misread as `大西亚玖璃` (simplified 亚) still scored
-0.83 for `大西亜玖璃`, and `虹ヶ咲` misread as `虹久咲` scored 0.93 once `ヶ`/`久` confusion was modelled.
+being pushed to second place. Observed: a region whose greedy decode substituted a visually
+near-identical character still scored 0.83 for the intended string, and a second target went from
+0.22 to 0.93 once that confusion pair was added to the per-position alternatives.
 
 **Identity matching uses task-appropriate embedding spaces.** CLIP is not used anywhere — its space
 clusters by art style and composition rather than identity, so the same character in a different style
@@ -34,8 +35,8 @@ lands far away while different characters with similar attributes land close.
 character across different artists and styles as positives, so a single registered image matches the
 character in a different outfit and a different rendering (measured: 0.85 and 0.87 from one reference).
 WD-Tagger is a corroborating signal only — its vocabulary is a fixed ~2,751 characters and it does not
-know newer ones at all (none of the twelve Hasunosora characters are present), so any name it emits is
-filtered against the gallery.
+know newer ones at all (a recent franchise's entire twelve-character cast can be absent from it), so
+any name it emits is filtered against the gallery.
 
 ArcFace is trained only on faces warped to a canonical 5-point template, so landmark alignment is
 mandatory — feeding a raw bounding-box crop puts every input out of distribution.
@@ -81,15 +82,15 @@ curl -X POST http://localhost:3000/analyze -F "image=@test.jpg"
 ```json
 {
   "ocr": {
-    "found": ["大西亜玖璃"],
-    "detail": [{ "list": "大西亜玖璃", "matched": true, "parts": [{ "text": "大西亜玖璃", "score": 0.834 }] }],
+    "found": ["search-string-a"],
+    "detail": [{ "list": "search-string-a", "matched": true, "parts": [{ "text": "search-string-a", "score": 0.834 }] }],
     "regions": 19,
     "fullText": "debug greedy decode, not used for matching"
   },
-  "faces":      [{ "name": "大西亜玖璃", "score": 0.7854, "margin": 0.7854, "box": [x, y, w, h] }],
-  "facesWeak":  [{ "name": "大西亜玖璃", "score": 0.3221, "margin": 0.3221, "box": [x, y, w, h] }],
-  "characters": [{ "name": "上原歩夢", "score": 0.8731, "margin": 0.8731, "source": "ccip" }],
-  "costumes":   [{ "name": "虹ヶ咲制服", "score": 1.0, "margin": 1.0, "source": "blazer,skirt,..." }],
+  "faces":      [{ "name": "person-a", "score": 0.7854, "margin": 0.7854, "box": [x, y, w, h] }],
+  "facesWeak":  [{ "name": "person-a", "score": 0.3221, "margin": 0.3221, "box": [x, y, w, h] }],
+  "characters": [{ "name": "character-a", "score": 0.8731, "margin": 0.8731, "source": "ccip" }],
+  "costumes":   [{ "name": "costume-a", "score": 1.0, "margin": 1.0, "source": "blazer,skirt,..." }],
   "_detections": { "realFaces": 2, "animeFaces": 2, "animePersons": 2, "textRegions": 19 },
   "_elapsedMs": 30607
 }
@@ -107,7 +108,7 @@ curl -X POST http://localhost:3000/analyze -F "image=@test.jpg"
   "margin":              { "face": 0.06, "character": 0.04, "costume": 0.05 },
   "ocr":                 { "scoreThreshold": 0.5, "detScales": [960, 1600] },
   "wdTagger":            { "characterTagThreshold": 0.6 },
-  "characterAliases":    { "uehara_ayumu": "上原歩夢" },
+  "characterAliases":    { "danbooru_tag_name": "character-a" },
   "candidates":          { "enabled": true, "dedupThreshold": 0.95, "maxPerName": 50 }
 }
 ```
@@ -138,12 +139,12 @@ One line per list. Tab-separated parts within a line must **all** be present (AN
 so **any one list matching** counts as a hit.
 
 ```
-大西亜玖璃
-上原歩夢	虹ヶ咲
+search-string-a
+first-part	second-part
 ```
 
 ```bash
-npm run search-strings -- --add "大西亜玖璃"
+npm run search-strings -- --add "search-string-a"
 npm run search-strings -- --list
 ```
 
@@ -155,7 +156,7 @@ gallery itself is untouched. You review the folder and promote what is worth kee
 
 ```bash
 npm run candidates -- --list                      # what has been collected
-npm run candidates -- --promote face 大西亜玖璃    # move into data/faces/大西亜玖璃/
+npm run candidates -- --promote face person-a     # move into data/faces/person-a/
 npm run register:faces                            # actually register
 npm run candidates -- --clear                     # discard everything collected
 ```
@@ -192,8 +193,8 @@ slow case. Line merging, minimum-strip-width filtering, scale de-duplication, ba
 a region cap keep the worst case bounded. INT8 quantization of the recognition model is the main
 remaining lever.
 
-The lightweight PP-OCRv4 mobile recognizer cannot be substituted: its dictionary contains only 5 kana
-and lacks `ヶ` and `咲` entirely, making Japanese impossible.
+The lightweight PP-OCRv4 mobile recognizer cannot be substituted: its dictionary holds only 5 kana and
+omits characters that Japanese proper nouns routinely need, which rules Japanese out entirely.
 
 ## Resetting
 
