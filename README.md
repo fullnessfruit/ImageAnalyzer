@@ -108,7 +108,7 @@ curl -X POST http://localhost:3000/analyze -F "image=@test.jpg"
   "margin":              { "face": 0.06, "character": 0.04, "costume": 0.05 },
   "ocr":                 { "scoreThreshold": 0.5, "detScales": [960, 1600] },
   "wdTagger":            { "characterTagThreshold": 0.6 },
-  "characterAliases":    { "danbooru_tag_name": "character-a" },
+  "characterAliases":    { "tagger_tag_name": "character-a" },
   "candidates":          { "enabled": true, "dedupThreshold": 0.95, "maxPerName": 50 }
 }
 ```
@@ -131,7 +131,7 @@ A match must clear both the absolute threshold and the **top-1 minus top-2 margi
 top-2 are close, the match is meaningless regardless of its absolute score, and reporting "unknown"
 beats reporting a wrong name.
 
-`characterAliases` maps WD-Tagger's romanized danbooru tags to whatever naming your gallery uses.
+`characterAliases` maps WD-Tagger's tag names to whatever naming your gallery uses.
 
 ### Search lists
 
@@ -185,33 +185,6 @@ npm run detect -- sample/image.jpg   # dump detection boxes and face landmarks
 `npm run analyze` uses the same code path as the server, so it is the tool for threshold tuning and
 regression checks.
 
-## Performance
-
-Roughly 7–40 s per image on an i5-3550 (no AVX2). Recognition dominates: the multilingual OCR model
-is 84 MB with 18,385 output classes, costing 0.8–1.3 s per text strip, so text-heavy images are the
-slow case. Line merging, minimum-strip-width filtering, scale de-duplication, batched inference, and
-a region cap keep the worst case bounded. INT8 quantization of the recognition model is the main
-remaining lever.
-
-The lightweight PP-OCRv4 mobile recognizer cannot be substituted: its dictionary holds only 5 kana and
-omits characters that Japanese proper nouns routinely need, which rules Japanese out entirely.
-
 ## Resetting
 
 Delete `db/embeddings.db` and re-run `npm run register:all`.
-
-## Models
-
-All auto-downloaded to `models/` on first run.
-
-| File | Model | Purpose |
-|---|---|---|
-| `ocr-det.onnx` | PP-OCRv4 DBNet | text region detection |
-| `ocr-rec-ch.onnx` + dict | PaddleOCR multilingual CRNN | CJK / kana / latin recognition |
-| `ocr-rec-ko.onnx` + dict | PaddleOCR Korean CRNN | hangul recognition |
-| `face-det.onnx` | InsightFace SCRFD det_10g | real face detection + 5 landmarks |
-| `arcface-w600k-r50.onnx` | InsightFace ArcFace | face embedding |
-| `anime-face-det.onnx` | deepghs YOLOv8s | anime face detection |
-| `anime-person-det.onnx` | deepghs YOLOv8s | anime person detection |
-| `ccip-feat.onnx` | deepghs CCIP caformer | anime character identity embedding |
-| `wd-tagger.onnx` + tags | SmilingWolf wd-vit-tagger-v3 | character names + clothing tags |
