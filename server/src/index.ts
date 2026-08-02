@@ -1,23 +1,25 @@
+/**
+ * 분석 서버 — HTTP 계층.
+ *
+ * POST /analyze 가 네 가지를 판정한다:
+ *   ocr        — searchStrings.tsv의 리스트 중 하나라도 이미지에 있는가
+ *   faces      — 실사 인물 (SCRFD 랜드마크 정합 → ArcFace → 갤러리)
+ *   characters — 애니 캐릭터 (WD-Tagger 제로샷 이름 + CCIP 갤러리 매칭)
+ *   costumes   — 캐릭터 의상 (머리 마스킹 → WD-Tagger 의류 태그 벡터 → 갤러리)
+ *
+ * config.json과 searchStrings.tsv는 요청마다 다시 읽어 재시작 없이 반영된다.
+ */
+
 import express from "express";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
 
-import { initDB, getAllEmbeddings, EmbeddingRow } from "./db";
+import { initDB, countEmbeddings } from "./db";
 import { ensureModelsDownloaded } from "./model-downloader";
-import { initOCR, performOCR } from "./ocr";
-import {
-  loadModels,
-  detectWithYOLO,
-  detectFaces,
-  detectPersons,
-  extractCLIPEmbedding,
-  extractArcFaceEmbedding,
-  extractCostumeRegion,
-  cosineSimilarity,
-  cropRegion,
-  Detection,
-} from "./inference";
+import { initOCR, parseSearchLists, isOcrReady } from "./ocr";
+import { loadModels, hasArcFace, hasCcip, hasWdTagger } from "./inference";
+import { analyzeImage, Config, DEFAULT_CONFIG } from "./analyze";
 
 const PROJECT_ROOT = path.resolve(__dirname, "..", "..");
 const MODELS_DIR = path.join(PROJECT_ROOT, "models");
@@ -25,159 +27,28 @@ const DB_DIR = path.join(PROJECT_ROOT, "db");
 const CONFIG_PATH = path.join(PROJECT_ROOT, "config.json");
 const SEARCH_STRINGS_PATH = path.join(PROJECT_ROOT, "searchStrings.tsv");
 
-interface Config {
-  similarityThreshold: {
-    character: number;
-    face: number;
-    costume: number;
-    person: number;
-  };
+/** 설정 파일이 없거나 깨져도 서버는 계속 동작해야 한다. */
+export function loadConfig(): Config {
+  try {
+    const raw = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf-8"));
+    return {
+      similarityThreshold: { ...DEFAULT_CONFIG.similarityThreshold, ...(raw.similarityThreshold ?? {}) },
+      margin: { ...DEFAULT_CONFIG.margin, ...(raw.margin ?? {}) },
+      ocr: { ...DEFAULT_CONFIG.ocr, ...(raw.ocr ?? {}) },
+      wdTagger: { ...DEFAULT_CONFIG.wdTagger, ...(raw.wdTagger ?? {}) },
+      characterAliases: { ...DEFAULT_CONFIG.characterAliases, ...(raw.characterAliases ?? {}) },
+      candidates: { ...DEFAULT_CONFIG.candidates, ...(raw.candidates ?? {}) },
+    };
+  } catch (e: any) {
+    console.warn(`⚠️  Config load failed - path: ${CONFIG_PATH}, error: ${e.message} (기본값 사용)`);
+    return DEFAULT_CONFIG;
+  }
 }
 
-function loadConfig(): Config {
-  const raw = fs.readFileSync(CONFIG_PATH, "utf-8");
-  return JSON.parse(raw) as Config;
-}
-
-function loadSearchStrings(): string[] {
+export function loadSearchLists() {
   if (!fs.existsSync(SEARCH_STRINGS_PATH)) return [];
-  return fs
-    .readFileSync(SEARCH_STRINGS_PATH, "utf-8")
-    .split("\n")
-    .map((line) => line.trimEnd())
-    .filter((line) => line.length > 0);
+  return parseSearchLists(fs.readFileSync(SEARCH_STRINGS_PATH, "utf-8"));
 }
-
-// --- Shared matching helper ---
-
-interface RecognitionMatch {
-  name: string;
-  confidence: number;
-  box: [number, number, number, number];
-}
-
-function findBestMatch(embedding: Float32Array, dbEmbeddings: EmbeddingRow[], threshold: number, label?: string): { name: string; similarity: number } | null {
-  let best = { name: "", similarity: 0 };
-  for (const row of dbEmbeddings) {
-    const stored = new Float32Array(row.embedding.buffer, row.embedding.byteOffset, row.embedding.byteLength / 4);
-    const sim = cosineSimilarity(embedding, stored);
-    if (sim > best.similarity) {
-      best = { name: row.name, similarity: sim };
-    }
-  }
-  if (label) {
-    const status = best.similarity >= threshold ? "MATCH" : "BELOW";
-    console.log(`[${label}] best="${best.name}" sim=${best.similarity.toFixed(4)} thr=${threshold} → ${status}`);
-  }
-  return best.similarity >= threshold ? best : null;
-}
-
-// --- Character Recognition ---
-
-async function recognizeCharacters(imageBuffer: Buffer, detections: Detection[], threshold: number): Promise<RecognitionMatch[]> {
-  const characterDetections = detections.filter((d) => d.classId === 0);
-  if (characterDetections.length === 0) return [];
-
-  const dbEmbeddings = getAllEmbeddings("character_embeddings");
-  if (dbEmbeddings.length === 0) return [];
-
-  const matches: RecognitionMatch[] = [];
-  for (const det of characterDetections) {
-    const cropped = await cropRegion(imageBuffer, det.box);
-    const embedding = await extractCLIPEmbedding(cropped);
-    if (!embedding) continue;
-
-    const best = findBestMatch(embedding, dbEmbeddings, threshold, "character");
-    if (best) {
-      matches.push({ name: best.name, confidence: parseFloat(best.similarity.toFixed(4)), box: det.box });
-    }
-  }
-  return matches;
-}
-
-// --- Face Recognition ---
-
-async function recognizeFaces(imageBuffer: Buffer, detections: Detection[], threshold: number): Promise<RecognitionMatch[]> {
-  if (detections.length === 0) return [];
-
-  const dbEmbeddings = getAllEmbeddings("face_embeddings");
-  if (dbEmbeddings.length === 0) return [];
-
-  const matches: RecognitionMatch[] = [];
-  for (const det of detections) {
-    const cropped = await cropRegion(imageBuffer, det.box);
-    const embedding = await extractArcFaceEmbedding(cropped);
-    if (!embedding) continue;
-
-    const best = findBestMatch(embedding, dbEmbeddings, threshold, "face");
-    if (best) {
-      matches.push({ name: best.name, confidence: parseFloat(best.similarity.toFixed(4)), box: det.box });
-    }
-  }
-  return matches;
-}
-
-// --- Costume Recognition ---
-
-async function recognizeCostumes(
-  imageBuffer: Buffer,
-  characterDetections: Detection[],
-  faceDetections: Detection[],
-  threshold: number
-): Promise<RecognitionMatch[]> {
-  const charDets = characterDetections.filter((d) => d.classId === 0);
-  if (charDets.length === 0) return [];
-
-  const dbEmbeddings = getAllEmbeddings("costume_embeddings");
-  if (dbEmbeddings.length === 0) return [];
-
-  const matches: RecognitionMatch[] = [];
-  for (const det of charDets) {
-    const costumeRegion = await extractCostumeRegion(imageBuffer, det.box, faceDetections);
-    if (!costumeRegion) continue;
-
-    const embedding = await extractCLIPEmbedding(costumeRegion);
-    if (!embedding) continue;
-
-    const best = findBestMatch(embedding, dbEmbeddings, threshold, "costume");
-    if (best) {
-      matches.push({ name: best.name, confidence: parseFloat(best.similarity.toFixed(4)), box: det.box });
-    }
-  }
-  return matches;
-}
-
-// --- Person Recognition (full-body ReID) ---
-
-async function recognizePersons(
-  imageBuffer: Buffer,
-  personDetections: Detection[],
-  faceDetections: Detection[],
-  threshold: number
-): Promise<RecognitionMatch[]> {
-  if (personDetections.length === 0) return [];
-
-  const dbEmbeddings = getAllEmbeddings("person_embeddings");
-  if (dbEmbeddings.length === 0) return [];
-
-  const matches: RecognitionMatch[] = [];
-  for (const det of personDetections) {
-    const masked = await extractCostumeRegion(imageBuffer, det.box, faceDetections);
-    // Fallback: if no face found in person box, use raw crop (same as register-persons.ts)
-    const region = masked ?? await cropRegion(imageBuffer, det.box);
-
-    const embedding = await extractCLIPEmbedding(region);
-    if (!embedding) continue;
-
-    const best = findBestMatch(embedding, dbEmbeddings, threshold, "person");
-    if (best) {
-      matches.push({ name: best.name, confidence: parseFloat(best.similarity.toFixed(4)), box: det.box });
-    }
-  }
-  return matches;
-}
-
-// --- Server ---
 
 async function main() {
   console.log("Initializing ImageAnalyzer server...");
@@ -187,6 +58,10 @@ async function main() {
   await loadModels(MODELS_DIR);
   await initOCR(MODELS_DIR);
 
+  console.log(
+    `📊 Gallery - face: ${countEmbeddings("face")}, character: ${countEmbeddings("character")}, costume: ${countEmbeddings("costume")}`,
+  );
+
   const app = express();
   app.use((_, res, next) => {
     res.header("Access-Control-Allow-Origin", "*");
@@ -195,60 +70,44 @@ async function main() {
     next();
   });
 
-  const upload = multer({ storage: multer.memoryStorage() });
+  const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 32 * 1024 * 1024 } });
 
   app.post("/analyze", upload.single("image"), async (req, res) => {
-    if (!req.file) {
-      res.status(400).json({ error: "No image file provided. Use field name 'image'." });
-      return;
-    }
-
-    const config = loadConfig();
-    const searchStrings = loadSearchStrings();
-    const imageBuffer = req.file.buffer;
-
     try {
-      const [ocr, yoloDetections, faceDetections, personDetections] = await Promise.all([
-        performOCR(imageBuffer, searchStrings),
-        detectWithYOLO(imageBuffer),
-        detectFaces(imageBuffer),
-        detectPersons(imageBuffer),
-      ]);
+      if (!req.file) {
+        res.status(400).json({ error: "No image file provided. Use field name 'image'." });
+        return;
+      }
 
-      const [characters, faces, costumes, persons] = await Promise.all([
-        recognizeCharacters(imageBuffer, yoloDetections, config.similarityThreshold.character),
-        recognizeFaces(imageBuffer, faceDetections, config.similarityThreshold.face),
-        recognizeCostumes(imageBuffer, yoloDetections, faceDetections, config.similarityThreshold.costume),
-        recognizePersons(imageBuffer, personDetections, faceDetections, config.similarityThreshold.person),
-      ]);
+      const result = await analyzeImage(req.file.buffer, loadSearchLists(), loadConfig());
 
-      res.json({
-        ocr,
-        characters,
-        faces,
-        costumes,
-        persons,
-        _detections: {
-          yoloCharacters: yoloDetections.filter((d) => d.classId === 0).length,
-          yoloFaces: yoloDetections.filter((d) => d.classId === 1).length,
-          faceDetFaces: faceDetections.length,
-          persons: personDetections.length,
-        },
-      });
+      console.log(
+        `✅ Analyze done - ms: ${result._elapsedMs}, ocrFound: ${result.ocr.found.length}, faces: ${result.faces.length}, characters: ${result.characters.length}, costumes: ${result.costumes.length}`,
+      );
+      res.json(result);
     } catch (err: any) {
-      console.error(`Analysis error: ${err.message}`);
+      console.error(`❌ Analysis error - message: ${err.message}, at: ${err.stack?.split("\n")[1]?.trim()}`);
       res.status(500).json({ error: "Analysis failed", details: err.message });
     }
   });
 
   app.get("/health", (_, res) => {
-    res.json({ status: "ok" });
+    res.json({
+      status: "ok",
+      ocr: isOcrReady(),
+      arcface: hasArcFace(),
+      ccip: hasCcip(),
+      wdTagger: hasWdTagger(),
+      gallery: {
+        face: countEmbeddings("face"),
+        character: countEmbeddings("character"),
+        costume: countEmbeddings("costume"),
+      },
+    });
   });
 
   const PORT = 3000;
-  app.listen(PORT, () => {
-    console.log(`ImageAnalyzer server running on http://localhost:${PORT}`);
-  });
+  app.listen(PORT, () => console.log(`✅ Server listening - url: http://localhost:${PORT}`));
 }
 
 main().catch((err) => {

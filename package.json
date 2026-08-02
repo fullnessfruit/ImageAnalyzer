@@ -1,17 +1,21 @@
 {
   "name": "image-analyzer",
-  "version": "1.0.0",
-  "description": "Local API server for image analysis: OCR, character recognition, and face recognition",
+  "version": "2.0.0",
+  "description": "Local API server: OCR list matching, real-person face recognition, anime character and costume recognition",
   "main": "server/dist/index.js",
   "scripts": {
     "build": "tsc -p server/tsconfig.json",
     "server": "npm run build && node server/dist/index.js",
     "dev": "npx nodemon --watch server/src --ext ts --exec \"npm run build && node server/dist/index.js\"",
-    "register:characters": "npx ts-node scripts/register-characters.ts",
-    "register:faces": "npx ts-node scripts/register-faces.ts",
-    "register:costumes": "npx ts-node scripts/register-costumes.ts",
-    "register:persons": "npx ts-node scripts/register-persons.ts",
-    "register:all": "npm run register:characters && npm run register:faces && npm run register:costumes && npm run register:persons"
+    "analyze": "npx ts-node scripts/analyze.ts",
+    "register:all": "npx ts-node scripts/register.ts all",
+    "register:faces": "npx ts-node scripts/register.ts face",
+    "register:characters": "npx ts-node scripts/register.ts character",
+    "register:costumes": "npx ts-node scripts/register.ts costume",
+    "candidates": "npx ts-node scripts/candidates.ts",
+    "search-strings": "npx ts-node scripts/search-strings.ts",
+    "tags": "npx ts-node scripts/tags.ts",
+    "detect": "npx ts-node scripts/detect.ts"
   },
   "dependencies": {
     "better-sqlite3": "^11.0.0",

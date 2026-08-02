@@ -1,0 +1,28 @@
+{
+  "similarityThreshold": {
+    "face": 0.45,
+    "faceWeak": 0.28,
+    "character": 0.82,
+    "costume": 0.55
+  },
+  "margin": {
+    "face": 0.06,
+    "character": 0.04,
+    "costume": 0.05
+  },
+  "ocr": {
+    "scoreThreshold": 0.5,
+    "detScales": [960, 1600]
+  },
+  "wdTagger": {
+    "characterTagThreshold": 0.6
+  },
+  "characterAliases": {
+    "uehara_ayumu": "上原歩夢"
+  },
+  "candidates": {
+    "enabled": true,
+    "dedupThreshold": 0.95,
+    "maxPerName": 50
+  }
+}

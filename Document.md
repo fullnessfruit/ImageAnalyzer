@@ -17,12 +17,12 @@
 - User instructions always override this file.
 ### Project-Specific Approach
 - 기능을 구현하기 전에 먼저 이 Document.md를 확인하여, 비슷한 기능이나 유틸리티가 이미 존재하는지 확인
-- 기존 코드와 기존 유틸리티 함수(예: `extractAccountFromUrl`, `normalizeUrl` 등)를 적극 재사용하고, 기존과 비슷한 로직을 만들어야 하는 경우가 생기면 가능한 공통 로직으로 만들어서 최대한 같은 로직을 중복 구현하지 않도록 해야함
+- 기존 코드와 기존 유틸리티 함수를 적극 재사용하고, 기존과 비슷한 로직을 만들어야 하는 경우가 생기면 가능한 공통 로직으로 만들어서 최대한 같은 로직을 중복 구현하지 않도록 해야함
 - 요구사항이 불분명하거나 여러 해석이 가능한 경우, 추측하지 말고 사용자에게 질문
 - 코드 수정 후 Document.md도 함께 갱신
 - 하나의 정보를 담은 로그는 반드시 한 줄로 작성 (Linux grep 같은 도구로 검색 용이)
-  - 좋은 예: `Logger.log('✅ Task completed - id: ${taskId}, duration: ${duration}ms, result: ${result}')`
-  - 나쁜 예: 여러 개의 Logger.log 호출로 관련 정보 분산
+  - 좋은 예: `console.log('✅ Task completed - id: ${taskId}, duration: ${duration}ms, result: ${result}')`
+  - 나쁜 예: 여러 개의 console.log 호출로 관련 정보 분산
 - 문제의 원인을 바로 파악하기 어려운 경우, 먼저 원인 분석에 도움이 되는 로그를 추가하고 다음 발생 시 로그를 기반으로 재분석
 - 사용량 절약을 위해, 어렵지 않은 작업(단순 텍스트 수정, 로그 추가, 간단한 리팩터링 등)은 Gemini CLI를 실행하여 처리할 수 있음. 단, Gemini에게 작업을 넘기기 전에 반드시 사용자에게 먼저 질문하여 넘길지 여부를 확인받을 것
 
@@ -30,194 +30,319 @@
 
 ## 프로젝트 개요
 
-이미지를 입력받아 다섯 가지 분석을 수행하는 로컬 API 서버:
-1. **OCR** — PaddleOCR(DBNet 검출 + CRNN 인식) + manga-ocr(일본어 폴백)로 텍스트 추출 후 searchStrings.tsv와 매칭
-2. **캐릭터 인식** — YOLO로 캐릭터 영역 검출 → CLIP 임베딩 추출 → SQLite DB와 코사인 유사도 비교
-3. **얼굴 인식** — 얼굴 검출 모델로 얼굴 영역 검출 → ArcFace 임베딩 추출 → SQLite DB와 코사인 유사도 비교
-4. **의상 인식** — 캐릭터 영역에서 얼굴 영역을 마스킹한 후 CLIP 임베딩 추출 → SQLite DB와 코사인 유사도 비교
-5. **전신 인식** — pretrained YOLO(COCO)로 사람 영역 검출 → 얼굴 마스킹 → CLIP 임베딩 추출 → SQLite DB와 코사인 유사도 비교
+이미지를 입력받아 네 가지를 판정하는 로컬 API 서버. 크롬 확장 프로그램에서 `POST /analyze`로 호출.
 
-크롬 확장 프로그램에서 `POST /analyze`로 호출.
+1. **OCR** — `searchStrings.tsv`의 리스트 중 **하나라도** 이미지에 있는가
+2. **실사 인물** — 등록된 인물의 얼굴이 있는가
+3. **캐릭터** — 애니 캐릭터가 누구인가
+4. **캐릭터 의상** — 등록된 의상을 입고 있는가
+
+전문(全文) 추출, 장면 이해, 실루엣 식별, 실사 전신 인식은 요구 범위가 아니다.
 
 ---
 
-## 아키텍처
+## 핵심 아키텍처 결정
 
-### 파이프라인 흐름
+### OCR은 "읽기"가 아니라 "찾기" 문제다
+요구사항이 목록 매칭뿐이므로 전문을 조립하지 않는다. 읽기 순서 복원, 라인 결합, 언어 폴백
+판정이 전부 불필요하다.
+
+**greedy 디코딩 후 부분문자열 비교를 하지 않는다.** greedy는 타임스텝마다 argmax를 취해
+정답 후보 집합을 전혀 활용하지 못하고, 정확 일치 확률이 문자당 정확도의 L제곱으로 떨어진다
+(5글자면 문자당 0.95여도 0.77). 대신 CTC 확률 격자 위에서 검색어의 사후확률을 직접 계산한다.
+탐색 공간이 `|사전|^T`에서 검색어 개수로 붕괴하므로 한 글자가 2위로 밀려도 매칭이 살아남는다.
+
+실제로 확인된 사례 — 같은 이미지에서 한 영역이 `大西亚玖璃`(간체 亚)로 오독됐지만 격자
+스코어링은 `大西亜玖璃`를 0.83으로 잡았다. 부분문자열 비교였다면 실패한다.
+
+### 검색어의 문자 종류가 인식 모델을 결정한다
+이미지의 언어를 추측하지 않는다. 찾으려는 문자열이 어떤 문자를 쓰는지는 이미 알고 있다.
+- `ocr-dict-ch` (18,383자): 한자 15,565 + 히라가나 84 + 가타카나 89 + 라틴 52 + 숫자 → 일본어·중국어·영어 커버
+- `ocr-dict-ko` (11,945자): 한글 11,172 + 라틴 52 + 숫자 → 한글 전용 (한자·가나 없음)
+
+두 사전이 겹치지 않으므로 한글이 포함된 검색어는 `ko`, 나머지는 `ch`로 보낸다. 영어 전용
+모델은 `ch`와 중복이라 쓰지 않는다. PP-OCRv4 **모바일** rec은 사전에 가나가 5자뿐이고
+`ヶ`·`咲`조차 없어 일본어에 쓸 수 없다 — 반드시 다국어 서버급 모델을 써야 한다.
+
+### 임계값은 모델마다 비교 불가능한 스케일 위에 있다
+ArcFace 코사인과 CCIP 코사인과 태그 벡터 코사인은 서로 다른 분포다. 비슷한 숫자를 나란히
+적으면 안 된다. 실측 근거:
+
+| 대상 | 점수 |
+|---|---|
+| 실사 동일 인물 (실물) | 0.64 ~ 0.97 |
+| 실사 동일 인물 (**사진 속 사진**) | 0.32 |
+| 실사 다른 인물 | 0.15 |
+| CCIP 동일 캐릭터 (등록 1장, 의상·화풍 다름) | 0.85 ~ 0.87 |
+| CCIP 갤러리에 없는 대상(실사 사진) | 0.18 ~ 0.33 |
+
+- **face 0.45 / faceWeak 0.28** — 실물과 사진 속 사진을 가르는 2단 구조(아래 참조).
+  0.8 같은 값은 동일 인물조차 전부 기각한다.
+- **character(CCIP) 0.82** — `ccip_onnx`의 `metrics.json`이 제시한 거리 임계값 0.1785에 대응.
+  다른 애니 캐릭터로 만든 음성 사례는 아직 측정하지 못했다.
+
+### 얼굴은 2단으로 보고한다
+사진 속 사진을 실물로 인정하지 않으면서도 놓치지는 않기 위해, 하한 `faceWeak`으로 한 번만
+매칭하고 점수로 두 단계를 가른다(두 번 돌릴 필요가 없다).
+
+- `faces` — `face`(0.45) 이상. 실물로 인정한다.
+- `facesWeak` — `faceWeak`(0.28) 이상 `face` 미만. 사진 속 사진·저화질이 여기 떨어진다. 자동 판정에 쓰면 안 된다.
+- `faceWeak` 미만 — 보고하지 않는다.
+
+실측: 같은 이미지에서 실물 0.7854 → `faces`, 액자 속 사진 0.3221 → `facesWeak`,
+다른 인물 0.1474 → 미보고.
+
+절대 임계값만으로 자르지 않고 **1위−2위 마진**을 함께 요구한다. 등록 장수가 다르면 신원마다
+근방 밀도가 달라지고, 1위와 2위가 붙어 있으면 임계값을 넘겨도 그 매칭은 무의미하기 때문이다.
+
+### 캐릭터는 등록한 것만 보고하고, 주축은 CCIP다
+신원 판정의 주축은 **CCIP**다. 서로 다른 작가·화풍의 같은 캐릭터를 positive로 학습한 모델이라
+등록 1장으로도 의상·구도가 달라진 이미지를 잡는다(실측: 1장 등록 → 다른 의상 0.85, 다른 교복 0.87).
+갤러리 기반이므로 **어떤 신작 캐릭터든 등록만 하면 동작한다.**
+
+**WD-Tagger는 보조 신호일 뿐이다.** 어휘가 약 2,751종으로 고정되어 있어 신작을 아예 모른다 —
+蓮ノ空 학원 캐릭터는 12명 전원이 어휘에 없다(니지가사키 세대는 있다). 따라서 태거가 낸 이름은
+**갤러리에 등록된 것만 통과**시키고, 등록 이름(보통 일본어 표기)으로 보고한다. 갤러리가 비어
+있으면 캐릭터는 아무것도 보고하지 않는다.
+
+CLIP은 쓰지 않는다. CLIP 공간은 신원이 아니라 화풍·구도·색조로 군집해서, 같은 캐릭터라도
+그림체가 바뀌면 멀어지고 다른 캐릭터라도 비슷한 속성이면 가까워진다. 임계값으로 고칠 수 없다.
+
+### 의상은 태그 벡터로 표현한다
+요구사항이 "다른 그림체로 그려져도, 다른 캐릭터가 입고 있어도 같은 의상으로 발견"이다.
+임베딩 모델은 전부 부적합하다 — CLIP은 화풍을, CCIP는 착용자 신원을 함께 인코딩하므로
+둘 중 하나만 바뀌어도 거리가 벌어진다.
+
+대신 WD-Tagger 출력에서 **의류·장신구 태그만 골라낸 확률 벡터**를 쓴다. 태그는 의미 단위라
+화풍에 불변이고, 옷만 기술하므로 착용자에도 불변이다. 머리·얼굴은 마스킹해 신원 단서를
+제거한다. 태거는 `nijigasaki_academy_school_uniform` 같은 **의상 이름 자체**를 태그로 갖고
+있어 식별력이 높다. 희귀 태그가 더 중요하므로 IDF로 가중한다.
+
+### 갤러리에 자동 등록하지 않는다 — 후보로 모으고 사람이 승인한다
+확정 매칭된 크롭을 갤러리에 바로 넣으면, 잘못 들어간 항목이 조용히 이후 매칭을 바꾸고
+그것이 다음 오탐을 부르는 되먹임이 생긴다. 되돌리려면 **어느 항목이 잘못됐는지** 알아야 하는데,
+분석 중 잘라낸 크롭은 디스크에 파일이 없어 눈으로 확인할 방법이 없다. 결국 전부 지우는
+맹목 롤백만 남는다.
+
+그래서 크롭을 `data/_candidates/<kind>/<이름>/`에 파일로 남기고 갤러리에는 손대지 않는다.
+사람이 추려서 `data/faces|characters|costumes/`로 옮긴 뒤 register를 돌려야 실제 등록된다.
+여기엔 학습이 없고 등록 = 임베딩 추출이라 검토 후 등록 비용이 사실상 없다.
+
+**매칭되지 않은 크롭은 저장하지 않는다.** 목적이 확정된 신원의 갤러리를 넓히는 것이기 때문이다.
+얼굴은 `faces` 밴드(실물)만 모으고 `facesWeak`는 제외한다 — 사진 속 사진을 갤러리에 넣으면
+안 되기 때문이다.
+
+캐릭터에서 가장 값진 후보는 **태거는 확정했는데 CCIP가 놓친 크롭**이다. 그 화풍·구도를 CCIP가
+아직 못 잡고 있다는 뜻이므로 갤러리에 가장 필요한 이미지다. 그래서 두 신호 중 하나만 확정해도
+CCIP 임베딩과 함께 수집한다.
+
+무한정 쌓이면 검토가 불가능해지므로 두 가지로 막는다 — 기존 후보와 코사인
+`dedupThreshold`(0.95) 이상이면 버리고(임베딩이 이미 계산돼 있어 비용이 없다),
+신원당 `maxPerName`(50)에서 멈춘다.
+
+### 임베딩 공간을 스키마에서 분리한다
+ArcFace / CCIP / 태그 벡터는 차원도 기하도 다르다. 섞어서 코사인을 재면 무의미하므로
+`embeddings` 테이블에 `space` 컬럼을 두고 같은 space끼리만 조회한다.
+
+### 등록과 질의는 반드시 같은 전처리를 거친다
+특히 얼굴은 정합 여부가 다르면 갤러리와 질의가 서로 다른 분포에 놓여 유사도가 무의미해진다.
+`scripts/register.ts`는 서버와 동일한 `inference.ts` 함수를 그대로 재사용한다.
+
+---
+
+## 파이프라인
+
 ```
 이미지 → POST /analyze
-  ├─ OCR: PaddleOCR DBNet 검출 → CRNN 인식(중국어 모델) → 폴백(manga-ocr/한국어/영어) → searchStrings 매칭
-  ├─ YOLO 검출 + 얼굴 검출 + YOLO-person 검출 (병렬 실행, 결과를 아래에서 공유)
-  ├─ 캐릭터: YOLO 캐릭터 영역 → 크롭 → CLIP 임베딩 → DB 코사인 매칭
-  ├─ 얼굴: face-det 얼굴 영역 → 크롭 → ArcFace 임베딩 → DB 코사인 매칭
-  ├─ 의상: YOLO 캐릭터 영역 - face-det 얼굴 영역 → 마스킹 크롭 → CLIP 임베딩 → DB 코사인 매칭
-  └─ 전신: YOLO-person 사람 영역 - face-det 얼굴 영역 → 마스킹 크롭 → CLIP 임베딩 → DB 코사인 매칭
-→ JSON 응답
+  ├─ OCR: raw 디코딩 1회 → DBNet 다중 스케일 검출 → 줄 병합 → 스트립 생성
+  │        → 배치 CRNN 인식([T,C] 확률 격자) → 검색어별 CTC 격자 스코어링
+  ├─ 검출: SCRFD(실사 얼굴+랜드마크) / 애니 얼굴 / 애니 인물  (병렬)
+  ├─ 실사 인물: 품질 게이트 → 5점 유사변환 정합 → ArcFace(flip TTA) → 갤러리 매칭
+  ├─ 캐릭터: 인물 영역 → WD-Tagger 캐릭터 태그(제로샷) + CCIP 임베딩 → 갤러리 매칭
+  └─ 의상: 인물 영역 → 머리 마스킹 → WD-Tagger 의류 태그 벡터 → 갤러리 매칭
+→ JSON
 ```
 
-### 모델 로딩 전략
-모든 ONNX 모델은 서버 시작 시 한 번만 로딩하여 메모리에 유지 (`inference.ts`의 모듈 레벨 싱글톤 세션: `clipSession`, `arcfaceSession`, `faceDetSession`, `yoloSession`; `ocr.ts`의 `detSession`, `recSessions`, `mangaEncoderSession`, `mangaDecoderSession`). CLIP, ArcFace, 얼굴검출, PaddleOCR, manga-ocr 모델은 첫 실행 시 `model-downloader.ts`에서 자동 다운로드. YOLO 캐릭터 모델은 별도 학습 필요.
+`config.json`과 `searchStrings.tsv`는 요청마다 다시 읽어 재시작 없이 반영된다.
 
-### 스토리지
-- **SQLite** (`db/embeddings.db`): character_embeddings, face_embeddings, costume_embeddings, person_embeddings 테이블
-- **config.json**: 유사도 임계값
-- **searchStrings.tsv**: OCR 검색 문자열 (한 줄에 하나, 탭 구분으로 복합 조건)
+### 성능 특성
+i5-3550(AVX2 없음) 기준 이미지당 9~30초. **인식(rec)이 전체의 80~90%**를 차지한다.
+다국어 rec 모델이 84MB·출력 클래스 18,385개라 스트립당 0.8~1.3초가 든다. 텍스트가 많은
+이미지일수록 느리다. 완화책으로 줄 병합, 최소 스트립 폭 필터, 스케일 중복 제거, 배치 추론,
+영역 수 상한(`MAX_REGIONS`)을 둔다. 더 줄이려면 rec 모델 INT8 양자화가 남은 수단이다.
 
 ---
 
-## 파일별 상세 설명
+## 파일별 상세
 
 ### config.json
 ```json
 {
-  "similarityThreshold": { "character": 0.75, "face": 0.80, "costume": 0.75, "person": 0.70 }
+  "similarityThreshold": { "face": 0.45, "faceWeak": 0.28, "character": 0.82, "costume": 0.55 },
+  "margin":              { "face": 0.06, "character": 0.04, "costume": 0.05 },
+  "ocr":                 { "scoreThreshold": 0.5, "detScales": [960, 1600] },
+  "wdTagger":            { "characterTagThreshold": 0.6 },
+  "characterAliases":    { "uehara_ayumu": "上原歩夢" },
+  "candidates":          { "enabled": true, "dedupThreshold": 0.95, "maxPerName": 50 }
 }
 ```
-매 `/analyze` 요청마다 다시 읽음 (서버 재시작 없이 설정 변경 반영).
+`characterAliases`는 WD-Tagger의 danbooru 로마자 태그를 갤러리 이름 표기(보통 일본어)로
+통일한다. 파일이 없거나 깨져도 기본값으로 동작한다.
 
 ### searchStrings.tsv
-OCR 검색 문자열을 한 줄에 하나씩 기록. 매 `/analyze` 요청마다 다시 읽음.
-
-**매칭 규칙**: 탭을 포함하지 않는 줄은 단순 문자열 매칭. 탭으로 구분된 줄은 모든 부분 문자열이 OCR 텍스트 내에 각각 존재해야 매칭 성공.
+한 줄 = 하나의 리스트. 줄 안의 탭 구분 파트는 **모두** 존재해야 하고(AND), 줄끼리는 OR라
+**한 리스트라도** 일치하면 성공.
 
 ```
 大西亜玖璃
-#桐生美也	Uehara Ayumu	大西亜玖璃
+上原歩夢	虹ヶ咲
 ```
-위 예시에서 1행은 "大西亜玖璃"가 있으면 매칭. 2행은 탭으로 구분된 세 문자열이 이미지 내에 모두 존재해야 매칭.
-
-### server/src/index.ts
-**역할**: 메인 서버 엔트리 포인트
-
-- `main()`: 초기화 순서 — 모델 다운로드 → DB 초기화 → ONNX 모델 로딩 → OCR 초기화(PaddleOCR + manga-ocr) → Express 서버 시작
-- `POST /analyze`: multipart `image` 필드를 받아 OCR + YOLO + 얼굴 검출 + YOLO-person 검출 병렬 실행 → 캐릭터/얼굴/의상/전신 인식 병렬 처리. 응답에 `_detections` 필드 포함 (raw 검출 수, 디버깅용)
-- `findBestMatch()`: 캐릭터/얼굴/의상/전신 인식에서 공통 사용하는 DB 임베딩 매칭 헬퍼
-- `recognizePersons()`: 사람 영역 내 얼굴 없으면 마스킹 없이 원본 크롭 사용 (fallback)
-- `GET /health`: 헬스 체크 엔드포인트
-- 모든 Origin에 대해 CORS 허용 (크롬 확장 프로그램 접근용)
-- `loadConfig()`를 요청마다 호출하여 재시작 없이 설정 변경 반영
+1행은 `大西亜玖璃`가 있으면 매칭. 2행은 두 문자열이 모두 있어야 매칭.
 
 ### server/src/ocr.ts
-**역할**: OCR 파이프라인 — PaddleOCR (텍스트 검출 + 인식) + manga-ocr (일본어 폴백)
+**역할**: 검색 목록 매칭. 세션은 `detSession`과 `recModels`(Map: `ch`/`ko` → 세션+사전+문자인덱스).
 
-**모듈 레벨 세션**: `detSession` (DBNet 검출), `recSessions` (Map: "ch"/"ko"/"en" → CRNN 세션), `recDicts` (Map: 언어 → 문자 사전), `mangaEncoderSession`/`mangaDecoderSession`/`mangaVocab`
+- `parseSearchLists()` — TSV를 `SearchList[]`로. 탭 파트 분해.
+- `detectAtScale()` — DBNet 확률맵(`sigmoid_0.tmp_0`이라 이미 확률) 이진화 → 연결 컴포넌트 →
+  바운딩 박스. **언클립은 등방 오프셋** `area×ratio/perimeter`로 계산한다. 박스 크기에 비례해
+  늘리면 가로로만 과확장되어 옆 글자를 삼킨다. 박스 점수는 bbox 영역 확률 평균(PaddleOCR
+  `box_score_fast`와 동일)이며 임계값이 낮다 — 키워드 스포팅에서는 재현율이 정밀도보다 중요하다.
+- `mergeIntoLines()` — 세로 범위가 겹치고 높이가 비슷하며 가로 간격이 좁은 박스를 합친다.
+  DBNet이 단어 단위로 쪼개 내놓으면 스트립 수가 늘고 문맥이 끊기며, 검색어가 조각 경계에
+  걸리면 어느 격자에서도 완성되지 않는다.
+- `buildStripsForRegion()` — 높이 48px 스트립 생성. **폭을 압축하지 않는다**(문자당 픽셀이
+  부족해지면 CTC가 문자를 분리하지 못한다). 길면 20% 겹치며 분할한다. 가장 짧은 검색어조차
+  담을 수 없는 좁은 스트립은 생성하지 않는다.
+- `unstackVertical()` — 세로쓰기 처리. 세로로 긴 영역을 그대로 높이 48로 줄이면 폭이 한 자리
+  픽셀이 되어 정보가 전손된다. 縦書き는 글자가 대략 정사각 셀에 하나씩 쌓이므로 셀 단위로
+  잘라 가로로 이어 붙이면 **글자를 세운 채** 가로 텍스트가 된다. 원본과 분해본을 모두
+  후보에 넣고 최고 점수를 취하므로 가정이 틀려도 손해가 없다.
+- `recognizeBatch()` — 폭이 비슷한 스트립끼리 묶어 배치 추론. 패딩은 정규화 후 0(중간 회색).
+  패딩 구간은 실제 폭 비율만큼 타임스텝을 잘라 격자에서 제외한다.
+- `ctcKeywordScore()` — 핵심. 표준 CTC forced alignment는 격자 전체가 정확히 검색어여야 해서
+  `제1화 大西亜玖璃 출연` 같은 줄에서 부분 매칭을 못 한다. 그래서 상태 0을 "아직 시작 안 함"으로
+  두고 항상 확률 1로 유지해 앞쪽 임의 문자열을 허용하고, 마지막 글자 도달 시점의 최대값을 취해
+  뒤쪽도 허용한다. 반환값은 **문자당 기하평균 확률** `P^(1/L)` — 길이가 다른 검색어끼리 비교 가능해진다.
+- `alternativesFor()` / `CONFUSION_GROUPS` — 한 위치에서 받아들일 문자 집합. 표기 흔들림
+  (가나 종류, 전각/반각, 대소문자)과 OCR 상습 혼동(`ヶ`↔`久`, `亜`↔`亚`, `ロ`↔`口`, `エ`↔`工` 등)을
+  모두 흡수한다. 문자열 변형을 조합으로 늘리지 않고 **격자 스코어링에서 위치별 대체 문자의
+  최대 확률**을 쓴다 — 혼동 문자가 여러 위치에 있어도 비용이 선형이다.
+  실측: `虹ヶ咲`가 `虹久咲`로 오독된 이미지에서 점수 0.218 → 0.925.
+- `greedyDecode()` — 진단용 전문. **판정 경로와 무관**하다.
 
-**파이프라인 흐름**:
-1. `detectTextRegions()` — PaddleOCR DBNet으로 텍스트 영역 검출. 최대변 960px 리사이즈(32배수), ImageNet 정규화. 출력 score map을 이진화 → 연결 컴포넌트(DFS 스택) → 바운딩 박스. `DET_UNCLIP_RATIO`로 확장.
-2. `recognizeRegion()` — 영역 크롭 후 고정 높이(48px) 비율 리사이즈, [-1,1] 정규화 → CRNN 인식 → CTC 디코딩.
-3. `performOCR()` — 1차: 중국어 모델(CJK+영어 커버)로 전체 인식 → `shouldFallback()` 판정 → 일본어/CJK → manga-ocr, 한국어 → 한국어 모델, 영어 → 영어 모델. 최종 텍스트 결합 후 searchStrings 매칭.
-
-**CTC 디코딩**: class 0 = blank, class i (i>0) = dict[i-1]. 연속 동일 클래스 제거, blank 제거. 각 타임스텝의 softmax 확률로 confidence 계산.
-
-**manga-ocr**: VisionEncoderDecoder 구조. ViT 인코더(224×224, [-1,1] 정규화) → BERT 디코더(autoregressive greedy, `[CLS]` 시작, `[SEP]` 종료). WordPiece 토큰 → `##` 제거하여 문자열 생성.
-
-**폴백 판정** (`shouldFallback`): confidence < 0.8, 텍스트 길이 2 이하인데 confidence < 0.9, 특수문자가 50% 이상, 일본어 비율이 애매한 경우 등.
-
-**언어 감지** (`detectLang`): 히라가나/카타카나 비율로 일본어, 한글 비율로 한국어, CJK 한자 비율로 중국어, 그 외 영어.
+**주의**: PaddleOCR rec ONNX는 추론 모드에서 softmax가 이미 적용되어 나온다. 확률에 softmax를
+다시 걸면 값이 1/C 규모로 무너진다.
 
 ### server/src/inference.ts
-**역할**: 모든 ONNX 모델 추론 로직
+**역할**: 모든 ONNX 추론. 세션은 모듈 레벨 싱글톤.
 
-**모듈 레벨 세션**: `clipSession`, `arcfaceSession`, `faceDetSession`, `yoloSession`, `yoloPersonSession` — `loadModels()`에서 한 번 설정 후 이후 모든 호출에서 사용.
+- `letterbox()` — 종횡비 유지 패딩. YOLOv8은 가운데 정렬+114, SCRFD는 **좌상단 정렬+0**
+  (InsightFace 구현과 동일)이라 두 방식을 지원한다.
+- `detectFaces()` — SCRFD det_10g. 출력 9개를 **열 수(1/4/10)로 그룹핑**하고 앵커 수
+  내림차순으로 정렬해 stride 8/16/32에 대응시킨다(이름 순서에 의존하지 않기 위해).
+  앵커당 2개. **랜드마크(10열 그룹)를 반드시 파싱한다** — ArcFace 정합에 필수다.
+- `estimateSimilarity()` — 5점 최소제곱 유사변환. 회전·스케일·평행이동 4자유도라 정규방정식이
+  닫힌 형태로 풀리고 a와 b가 분리된다(2×2 SVD 불필요).
+- `alignFace()` — 출력 112×112 각 픽셀에서 원본을 역방향 이중선형 샘플링. `ARCFACE_TEMPLATE`은
+  ArcFace 학습에 쓰인 정규 5점 배치다.
+- `extractFaceEmbedding()` — 원본과 좌우반전을 각각 임베딩해 L2 정규화 후 평균(flip TTA).
+- `faceQualityOk()` — 최소 크기, 눈 간격, 코가 두 눈 중점에서 벗어난 정도로 극단 측면 배제.
+  저품질 얼굴은 갤러리와 질의 양쪽을 오염시키므로 매칭을 시도하지 않는 편이 낫다.
+- `runYolo()` — YOLOv8 출력이 `[1,4+nc,N]`과 `[1,N,4+nc]` 두 레이아웃으로 나올 수 있어
+  **작은 축을 필드 축으로 런타임 판별**한다.
+- `extractCcipEmbedding()` — 384×384, ImageNet 정규화, 출력 768차원.
+- `runTagger()` / `taggerProbs()` — WD-Tagger v3. **448×448 NHWC, BGR, 0~255 그대로**(정규화 없음).
+  흰 배경 정사각 패딩. **sharp는 체이닝 순서와 무관하게 resize를 extend보다 먼저 적용하므로
+  패딩과 리사이즈를 별도 파이프라인으로 나눠야 한다** — 한 번에 체이닝하면 정사각이 아닌
+  입력에서 종횡비가 뭉개지고 텐서가 어긋난다.
+- `cropWithMask()` — 영역을 크롭하고 지정 박스를 회색으로 덮는다. 얼굴 위로 높이의 60%를
+  더 확장해 머리카락까지 지운다. 의상에서 착용자 신원을 제거하는 용도.
+- `CLOTHING_PATTERN` — 의류·장신구 태그 판별 정규식. 머리색·눈색·체형 같은 착용자 고유
+  속성은 **의도적으로 제외**한다. 그래야 다른 캐릭터가 같은 옷을 입어도 매칭된다.
 
-**전처리**:
-- `preprocessForCLIP`: 224×224 리사이즈, ImageNet mean/std 정규화, NCHW 레이아웃
-- `preprocessForArcFace`: 112×112 리사이즈, [-1, 1] 정규화, NCHW 레이아웃
-- `preprocessForYOLO`: 640×640 리사이즈, [0, 1] 정규화, 박스 좌표 복원용 스케일 팩터 반환
-- `preprocessForFaceDet`: 레터박싱(비율 유지 + 패딩) 640×640, mean 127.5 / scale 128 정규화. `ratio`, `padX`, `padY` 반환하여 좌표 복원에 사용. 세로로 긴 이미지 등 극단적 비율에서도 얼굴 검출이 정상 동작.
+### server/src/matching.ts
+**역할**: 얼굴/캐릭터/의상 공통 갤러리 판정.
 
-**YOLO 출력 파싱**: YOLOv8 출력 shape `[1, numFields, numBoxes]` (전치 형식). 처음 4개 필드는 cx/cy/w/h, 나머지는 클래스 신뢰도. IoU 임계값 0.45로 NMS 적용.
+`scoreEntry()`는 centroid 유사도와 개별 등록 이미지 최대 유사도의 **평균**이다. centroid만
+쓰면 다형적 신원(의상·시기가 다른 사진들)에서 어느 쪽과도 안 맞고, 최대값만 쓰면 잘못
+등록된 한 장이 영구 오탐 자석이 된다. 등록이 1장이면 두 값이 같아 그대로 그 값이 된다.
 
-**얼굴 검출 출력 파싱 (SCRFD)**: InsightFace det_10g 모델은 9개 텐서 출력 — 3개 FPN 레벨(stride 8/16/32) × (score [N,1] + bbox [N,4] + landmarks [N,10]). 텐서 컬럼 수(1/4/10)로 그룹핑, 앵커 수(내림차순)로 정렬하여 stride 매칭. 앵커당 2개, 앵커 좌표 기반 bbox 디코딩. IoU 임계값 0.4로 NMS 적용.
+`matchGallery()`는 임계값과 마진을 **둘 다** 통과해야 매칭을 반환한다. 통과하지 못하면 null —
+틀린 이름을 내는 것보다 "모름"이 낫다.
 
-`detectPersons(imageBuffer)` — COCO pretrained YOLO로 사람 영역만 검출 (class 0 = person). `parseYOLOOutput` 공유.
+### server/src/analyze.ts
+**역할**: 분석 오케스트레이션. HTTP와 분리해 CLI에서도 같은 경로를 쓴다.
 
-`cosineSimilarity(a, b)` — 캐릭터/얼굴/의상/전신 매칭에 공통 사용되는 유틸리티.
+`analyzeImage()`가 검출을 먼저 병렬로 끝내고 인식 단계가 그 결과를 공유한다.
 
-`cropRegion(imageBuffer, box)` — sharp로 영역 추출, 좌표를 음수가 되지 않도록 클램프.
+- `recognizeFaces()` — `faceWeak` 하한으로 한 번만 매칭하고 점수로 `strong`/`weak`을 가른다.
+- `recognizeCharacters()` — 갤러리가 비면 즉시 빈 배열을 반환한다(등록한 것만 보고). 인물이
+  검출되지 않으면 이미지 전체를 하나의 영역으로 본다.
 
-`extractCostumeRegion(imageBuffer, characterBox, faceBoxes)` — 캐릭터 영역을 크롭한 뒤, 해당 영역 내 얼굴을 찾아 회색(128,128,128)으로 마스킹. 얼굴 위 30% 패딩을 추가하여 머리카락도 마스킹. 캐릭터 영역 내에 얼굴이 없으면 null 반환.
+### server/src/candidates.ts
+**역할**: 확정 매칭된 크롭을 검토용 파일로 남긴다. 갤러리는 건드리지 않는다.
+
+`collectCandidate()` — 상한 확인 → 기존 후보와 코사인 비교로 중복 제거 → JPEG 저장 →
+`candidates` 테이블에 임베딩과 함께 기록. 파일명은 `<점수>-<sha1 앞 12자>.jpg`라 점수순으로
+정렬되고 같은 크롭이 두 번 저장되지 않는다.
 
 ### server/src/db.ts
-**역할**: SQLite 데이터베이스 관리
+**역할**: 임베딩 저장소.
 
-동일 스키마의 네 테이블:
-- `character_embeddings`: name, image_path (unique), embedding (BLOB)
-- `face_embeddings`: name, image_path (unique), embedding (BLOB)
-- `costume_embeddings`: name, image_path (unique), embedding (BLOB)
-- `person_embeddings`: name, image_path (unique), embedding (BLOB)
+`embeddings` — 승인된 갤러리. `kind`(face/character/costume) × `space`(arcface/ccip/wdtag) ×
+`name` × `image_path`(kind별 UNIQUE) × `embedding` × `auto`.
 
-`isImageRegistered()` — `image_path`로 중복 등록 방지.
+`candidates` — 검토 대기 중인 크롭. 같은 컬럼에 `file_path`(UNIQUE) · `score` · `source`가 붙는다.
+`getCandidateVectors()`가 중복 판정용 벡터를 준다. 두 테이블을 분리해 둔 덕에 후보가 매칭에
+전혀 영향을 주지 않는다.
 
-임베딩은 Float32Array의 raw 버퍼로 저장.
+`getGallery()`가 이름별로 묶어 L2 정규화된 벡터 목록과 centroid를 만든다.
+
+`bufferToFloat32()` — better-sqlite3의 Buffer는 공용 풀의 뷰라 byteOffset이 4바이트 정렬이라는
+보장이 없다. `ArrayBuffer.slice`로 0-오프셋 복사본을 만들어야 Float32Array 생성이 안전하다.
 
 ### server/src/model-downloader.ts
-**역할**: 첫 실행 시 ONNX 모델 자동 다운로드
+**역할**: ONNX 자동 다운로드.
 
-모델 목록:
-- `clip`: Qdrant/clip-ViT-B-32-vision (`clip-vit-base-patch32.onnx`)
-- `arcface`: public-data/insightface buffalo_l w600k_r50 (`arcface-w600k-r50.onnx`)
-- `facedet`: public-data/insightface buffalo_l det_10g (`face-detection.onnx`)
-- `yolo-person`: COCO pretrained YOLOv8n (`yolo-person.onnx`) — 자동 다운로드 시도, 실패 시 `training/export_person_model.py`로 수동 변환
-- `paddleocr-det`: OleehyO/paddleocrv4 DBNet 텍스트 검출 (`paddleocr-det.onnx`)
-- `paddleocr-rec-ch`: monkt/paddleocr-onnx 중국어 CRNN 인식 (`paddleocr-rec-ch.onnx`) — CJK+영어 커버, 1차 인식 모델
-- `paddleocr-dict-ch`: 중국어 모델 문자 사전 (`paddleocr-dict-ch.txt`)
-- `paddleocr-rec-ko`: 한국어 CRNN 인식 (`paddleocr-rec-ko.onnx`) — 한국어 폴백용
-- `paddleocr-dict-ko`: 한국어 모델 문자 사전 (`paddleocr-dict-ko.txt`)
-- `paddleocr-rec-en`: 영어 CRNN 인식 (`paddleocr-rec-en.onnx`) — 영어 폴백용
-- `paddleocr-dict-en`: 영어 모델 문자 사전 (`paddleocr-dict-en.txt`)
-- `manga-ocr-encoder`: l0wgear/manga-ocr-2025-onnx ViT 인코더 (`manga-ocr-encoder.onnx`) — 일본어 폴백용
-- `manga-ocr-decoder`: BERT 디코더 (`manga-ocr-decoder.onnx`)
-- `manga-ocr-vocab`: WordPiece 어휘 (`manga-ocr-vocab.txt`)
+HuggingFace는 `/resolve/main/`에 **307 + 상대경로 Location** 또는 302 + 절대 CDN URL을
+반환한다. 상대경로를 그대로 재요청하면 `Invalid URL`로 실패하므로 `new URL(location, url)`로
+기준 해석해야 한다. 또한 **응답이 200으로 확정되기 전에는 파일 핸들을 열지 않는다** —
+Windows에서 열린 핸들에 unlink를 시도하면 EPERM이 난다. `.part`로 받아 완료 후 rename한다.
 
-HTTP 301/302 리다이렉트 처리. stdout에 다운로드 진행률 표시. 파일이 이미 존재하면 스킵.
+모델 목록: `ocr-det`, `ocr-rec-ch`/`ocr-dict-ch`, `ocr-rec-ko`/`ocr-dict-ko`,
+`face-det`(SCRFD det_10g), `arcface`(w600k_r50), `anime-face-det`, `anime-person-det`,
+`ccip`(caformer model_feat), `wd-tagger`/`wd-tags`.
 
-### scripts/register-characters.ts
-**역할**: 캐릭터 임베딩 일괄 등록
+### server/src/index.ts
+**역할**: HTTP 계층. `POST /analyze`(multipart `image`), `GET /health`(모델·갤러리 상태).
+모든 Origin CORS 허용(크롬 확장용). `loadConfig()`는 파일이 없거나 깨져도 기본값으로 동작한다.
 
-`data/characters/` 하위 폴더 스캔. 폴더명 = 캐릭터 이름. 각 이미지에서 CLIP 임베딩 추출 후 `character_embeddings` 테이블에 저장. 이미 등록된 이미지(상대 경로 기준)는 스킵.
+### scripts/register.ts
+**역할**: 갤러리 등록 공통 드라이버. `npx ts-node scripts/register.ts [face|character|costume|all]`
 
-### scripts/register-faces.ts
-**역할**: 얼굴 임베딩 일괄 등록
+`data/faces/<인물명>/`, `data/characters/<캐릭터명>/`, `data/costumes/<의상명>/` 하위 이미지를
+스캔한다. 폴더명이 곧 이름. 이미 등록된 이미지는 건너뛴다. 과제별 차이는 `extract` 함수뿐이고
+스캔·중복검사·삽입 로직은 공유한다.
 
-`data/faces/` 하위 폴더 스캔. 폴더명 = 인물 이름. 각 이미지에서 얼굴 검출 (가장 큰 얼굴 사용) → ArcFace 임베딩 추출 → `face_embeddings` 테이블에 저장. 이미 등록된 이미지는 스킵.
+얼굴은 랜드마크가 없거나 품질 게이트를 통과하지 못하면 **등록하지 않는다** — 정합 불가능한
+갤러리 항목은 매칭을 망친다.
 
-### scripts/register-costumes.ts
-**역할**: 의상 임베딩 일괄 등록
+### scripts/analyze.ts
+**역할**: 서버 없이 로컬 이미지/폴더 분석. 임계값 조정과 회귀 확인용.
 
-`data/costumes/` 하위 폴더 스캔. 폴더명 = 해당 의상을 입었던 캐릭터 이름. 각 이미지에서 CLIP 임베딩 추출 후 `costume_embeddings` 테이블에 저장. 이미 등록된 이미지는 스킵. 의상 이미지는 얼굴 없이 의상만 크롭된 상태 권장.
+### scripts/tags.ts
+**역할**: WD-Tagger 원시 확률 덤프(rating/character/general 상위 20). 캐릭터 임계값 조정,
+의상 태그 확인, 태거가 무엇을 보고 있는지 진단.
 
-### scripts/register-persons.ts
-**역할**: 전신 임베딩 일괄 등록
+### scripts/detect.ts
+**역할**: 검출 박스와 얼굴 랜드마크 덤프. 좌표 복원이 맞는지 진단.
 
-`data/persons/` 하위 폴더 스캔. 폴더명 = 인물 이름. 각 이미지에서 얼굴 검출 → 얼굴 마스킹(의상 인식과 동일한 `extractCostumeRegion` 사용, 전체 이미지를 character box로 전달) → CLIP 임베딩 추출 → `person_embeddings` 테이블에 저장. 얼굴이 검출되지 않으면 마스킹 없이 원본 사용.
+### scripts/candidates.ts
+**역할**: 후보 검토와 승인. `--list [kind] [name]` / `--promote <kind> <name>` / `--clear [kind] [name]`
 
-### training/export_person_model.py
-**역할**: pretrained YOLOv8n(COCO)를 ONNX로 변환하는 폴백 스크립트. 자동 다운로드 실패 시 사용.
+`--promote`는 후보 파일을 `data/<등록폴더>/<이름>/`으로 **이동**하고 후보 레코드를 지운다.
+등록은 별도로 `register`를 돌려야 일어난다 — 승인과 등록을 분리해야 옮긴 뒤에도 마음을 바꿀 수 있다.
+`--clear`는 파일과 레코드를 함께 지우며 갤러리는 건드리지 않는다.
 
-### scripts/update-config.ts
-**역할**: searchStrings.tsv 관리 CLI 도구
-
-`--add "문자열"` / `--remove "문자열"` / `--list`
-
-### training/train.py
-**역할**: YOLOv8 Nano 파인튜닝 + ONNX 변환
-
-- `data.yaml` 자동 생성 (클래스: ["character", "face"])
-- `data/yolo-training/images` + `labels` 데이터로 학습
-- `best.pt` → `models/yolo-characters.onnx`로 변환
-- CLI 인자로 커스텀 경로 지원 (Google Colab용)
-
-### training/augment.py
-**역할**: 학습 데이터 증강
-
-`data/characters/` 이미지를 읽어 다음 증강을 랜덤 조합 적용:
-- 실루엣 변환
-- 색상 변형 (밝기, 대비, 채도)
-- 회전 (-30° ~ +30°)
-- 좌우 반전
-- 가우시안 블러
-
-원본 + 증강 이미지를 `data/yolo-training/images/`에, YOLO 형식 라벨을 `data/yolo-training/labels/`에 저장. 기본 원본 1개당 증강 5개 생성.
-
-**라벨 형식**: 전체 이미지 바운딩 박스 (`class_id 0.5 0.5 1.0 1.0`) — 소스 이미지가 대상 주변으로 밀착 크롭되어 있다고 가정.
+### scripts/search-strings.ts
+**역할**: `searchStrings.tsv` 관리. `--add` / `--remove` / `--list`
