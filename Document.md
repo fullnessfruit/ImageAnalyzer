@@ -309,9 +309,17 @@ HuggingFace는 `/resolve/main/`에 **307 + 상대경로 Location** 또는 302 + 
 기준 해석해야 한다. 또한 **응답이 200으로 확정되기 전에는 파일 핸들을 열지 않는다** —
 Windows에서 열린 핸들에 unlink를 시도하면 EPERM이 난다. `.part`로 받아 완료 후 rename한다.
 
-모델 목록: `ocr-det`, `ocr-rec-ch`/`ocr-dict-ch`, `ocr-rec-ko`/`ocr-dict-ko`,
-`face-det`(SCRFD det_10g), `arcface`(w600k_r50), `anime-face-det`, `anime-person-det`,
-`ccip`(caformer model_feat), `wd-tagger`/`wd-tags`.
+| 파일 | 모델 | 용도 |
+|---|---|---|
+| `ocr-det.onnx` | PP-OCRv4 DBNet | 텍스트 영역 검출 |
+| `ocr-rec-ch.onnx` + 사전 | PaddleOCR 다국어 CRNN | 일본어·중국어·영어 인식 |
+| `ocr-rec-ko.onnx` + 사전 | PaddleOCR 한국어 CRNN | 한국어 인식 |
+| `face-det.onnx` | InsightFace SCRFD det_10g | 실사 얼굴 검출 + 5점 랜드마크 |
+| `arcface-w600k-r50.onnx` | InsightFace ArcFace | 얼굴 임베딩 |
+| `anime-face-det.onnx` | deepghs YOLOv8s | 애니 얼굴 검출 |
+| `anime-person-det.onnx` | deepghs YOLOv8s | 애니 인물 검출 |
+| `ccip-feat.onnx` | deepghs CCIP caformer | 캐릭터 신원 임베딩 |
+| `wd-tagger.onnx` + `wd-tags.csv` | SmilingWolf wd-vit-tagger-v3 | 캐릭터 이름 + 의류 태그 |
 
 ### server/src/index.ts
 **역할**: HTTP 계층. `POST /analyze`(multipart `image`), `GET /health`(모델·갤러리 상태).
