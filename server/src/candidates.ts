@@ -1,12 +1,12 @@
 /**
- * 후보 수집 — 확정 매칭된 크롭을 나중에 검토해서 등록할 수 있도록 파일로 남긴다.
+ * 후보 수집 - 확정 매칭된 크롭을 나중에 검토해서 등록할 수 있도록 파일로 남긴다.
  *
  * 갤러리에 자동으로 넣지 않는다. 자동 등록은 잘못 들어간 항목이 조용히 이후 매칭을 바꾸고,
  * 되돌리려면 어느 항목이 잘못됐는지 알아야 하는데 분석 중 잘라낸 크롭은 디스크에 없어
  * 눈으로 확인할 수가 없다. 결국 전부 지우는 맹목 롤백만 남는다.
  * 파일로 남겨두면 사람이 추려서 data/ 로 옮기고, 갤러리에는 승인된 것만 들어간다.
  *
- * 매칭되지 않은 크롭은 저장하지 않는다 — 확정된 신원의 갤러리를 넓히는 것이 목적이다.
+ * 매칭되지 않은 크롭은 저장하지 않는다 - 확정된 신원의 갤러리를 넓히는 것이 목적이다.
  */
 
 import fs from "fs";
@@ -73,5 +73,5 @@ export async function collectCandidate(opts: {
   await sharp(crop).jpeg({ quality: 92 }).toFile(file);
   insertCandidate(kind, space, name, path.relative(dataDir, file).replace(/\\/g, "/"), embedding, score, source);
 
-  console.log(`📥 Candidate saved - kind: ${kind}, name: ${name}, score: ${score.toFixed(4)}, file: ${path.basename(file)}, source: ${source}`);
+  console.log(`Candidate saved - kind: ${kind}, name: ${name}, score: ${score.toFixed(4)}, file: ${path.basename(file)}, source: ${source}`);
 }

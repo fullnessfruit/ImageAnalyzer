@@ -1,11 +1,11 @@
 /**
- * 분석 서버 — HTTP 계층.
+ * 분석 서버 - HTTP 계층.
  *
  * POST /analyze 가 네 가지를 판정한다:
- *   ocr        — searchStrings.tsv의 리스트 중 하나라도 이미지에 있는가
- *   faces      — 실사 인물 (SCRFD 랜드마크 정합 → ArcFace → 갤러리)
- *   characters — 애니 캐릭터 (WD-Tagger 제로샷 이름 + CCIP 갤러리 매칭)
- *   costumes   — 캐릭터 의상 (머리 마스킹 → WD-Tagger 의류 태그 벡터 → 갤러리)
+ *   ocr        - searchStrings.tsv의 리스트 중 하나라도 이미지에 있는가
+ *   faces      - 실사 인물 (SCRFD 랜드마크 정합 → ArcFace → 갤러리)
+ *   characters - 애니 캐릭터 (WD-Tagger 제로샷 이름 + CCIP 갤러리 매칭)
+ *   costumes   - 캐릭터 의상 (머리 마스킹 → WD-Tagger 의류 태그 벡터 → 갤러리)
  *
  * config.json과 searchStrings.tsv는 요청마다 다시 읽어 재시작 없이 반영된다.
  */
@@ -40,7 +40,7 @@ export function loadConfig(): Config {
       candidates: { ...DEFAULT_CONFIG.candidates, ...(raw.candidates ?? {}) },
     };
   } catch (e: any) {
-    console.warn(`⚠️  Config load failed - path: ${CONFIG_PATH}, error: ${e.message} (기본값 사용)`);
+    console.warn(`Config load failed - path: ${CONFIG_PATH}, error: ${e.message} (기본값 사용)`);
     return DEFAULT_CONFIG;
   }
 }
@@ -59,7 +59,7 @@ async function main() {
   await initOCR(MODELS_DIR);
 
   console.log(
-    `📊 Gallery - face: ${countEmbeddings("face")}, character: ${countEmbeddings("character")}, costume: ${countEmbeddings("costume")}`,
+    `Gallery - face: ${countEmbeddings("face")}, character: ${countEmbeddings("character")}, costume: ${countEmbeddings("costume")}`,
   );
 
   const app = express();
@@ -82,11 +82,11 @@ async function main() {
       const result = await analyzeImage(req.file.buffer, loadSearchLists(), loadConfig());
 
       console.log(
-        `✅ Analyze done - ms: ${result._elapsedMs}, ocrFound: ${result.ocr.found.length}, faces: ${result.faces.length}, characters: ${result.characters.length}, costumes: ${result.costumes.length}`,
+        `Analyze done - ms: ${result._elapsedMs}, ocrFound: ${result.ocr.found.length}, faces: ${result.faces.length}, characters: ${result.characters.length}, costumes: ${result.costumes.length}`,
       );
       res.json(result);
     } catch (err: any) {
-      console.error(`❌ Analysis error - message: ${err.message}, at: ${err.stack?.split("\n")[1]?.trim()}`);
+      console.error(`Analysis error - message: ${err.message}, at: ${err.stack?.split("\n")[1]?.trim()}`);
       res.status(500).json({ error: "Analysis failed", details: err.message });
     }
   });
@@ -107,7 +107,7 @@ async function main() {
   });
 
   const PORT = 3000;
-  app.listen(PORT, () => console.log(`✅ Server listening - url: http://localhost:${PORT}`));
+  app.listen(PORT, () => console.log(`Server listening - url: http://localhost:${PORT}`));
 }
 
 main().catch((err) => {

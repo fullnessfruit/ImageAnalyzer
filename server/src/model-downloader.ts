@@ -3,7 +3,7 @@
  *
  * HuggingFace는 /resolve/main/ 요청에 대해 307(상대경로 Location) 또는 302(절대 CDN URL)를
  * 반환한다. 상대경로를 그대로 재요청하면 "Invalid URL"로 실패하므로 반드시 기준 URL에
- * 상대 해석해야 한다. 또한 응답이 200으로 확정되기 전에는 파일 핸들을 열지 않는다 —
+ * 상대 해석해야 한다. 또한 응답이 200으로 확정되기 전에는 파일 핸들을 열지 않는다 -
  * Windows에서 열린 핸들에 unlink를 시도하면 EPERM이 난다.
  */
 
@@ -185,14 +185,14 @@ export async function ensureModelsDownloaded(modelsDir: string): Promise<void> {
       await fetchToFile(info.url, dest, MAX_REDIRECTS);
     } catch (err: any) {
       failed.push(name);
-      console.error(`❌ Download failed - model: ${name}, url: ${info.url}, error: ${err.message}`);
+      console.error(`Download failed - model: ${name}, url: ${info.url}, error: ${err.message}`);
     }
   }
 
   if (failed.length > 0) {
-    console.error(`❌ Model download incomplete - failed: ${failed.join(", ")} (해당 기능이 비활성화된다)`);
+    console.error(`Model download incomplete - failed: ${failed.join(", ")} (해당 기능이 비활성화된다)`);
   } else {
-    console.log(`✅ All models present - count: ${Object.keys(MODELS).length}, dir: ${modelsDir}`);
+    console.log(`All models present - count: ${Object.keys(MODELS).length}, dir: ${modelsDir}`);
   }
 }
 

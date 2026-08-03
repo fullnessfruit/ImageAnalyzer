@@ -3,10 +3,10 @@
 Local API server for image analysis. Accepts an image and answers four questions, designed to be
 called from a Chrome extension:
 
-1. **OCR list matching** — does the image contain any of the strings in `searchStrings.tsv`?
-2. **Real-person face** — is a registered person's face present?
-3. **Anime character** — which character is this?
-4. **Anime costume** — is a registered costume being worn?
+1. **OCR list matching** - does the image contain any of the strings in `searchStrings.tsv`?
+2. **Real-person face** - is a registered person's face present?
+3. **Anime character** - which character is this?
+4. **Anime costume** - is a registered costume being worn?
 
 It does not extract full text, describe scenes, identify silhouettes, or do real-person full-body
 re-identification. Those are out of scope by design.
@@ -21,7 +21,7 @@ being pushed to second place. Observed: a region whose greedy decode substituted
 near-identical character still scored 0.83 for the intended string, and a second target went from
 0.22 to 0.93 once that confusion pair was added to the per-position alternatives.
 
-**Identity matching uses task-appropriate embedding spaces.** CLIP is not used anywhere — its space
+**Identity matching uses task-appropriate embedding spaces.** CLIP is not used anywhere - its space
 clusters by art style and composition rather than identity, so the same character in a different style
 lands far away while different characters with similar attributes land close.
 
@@ -34,12 +34,12 @@ lands far away while different characters with similar attributes land close.
 **Only registered characters are reported.** CCIP carries identity: it is trained with the same
 character across different artists and styles as positives, so a single registered image matches the
 character in a different outfit and a different rendering (measured: 0.85 and 0.87 from one reference).
-WD-Tagger is a corroborating signal only — its vocabulary is a fixed ~2,751 characters and it does not
+WD-Tagger is a corroborating signal only - its vocabulary is a fixed ~2,751 characters and it does not
 know newer ones at all (a recent franchise's entire twelve-character cast can be absent from it), so
 any name it emits is filtered against the gallery.
 
 ArcFace is trained only on faces warped to a canonical 5-point template, so landmark alignment is
-mandatory — feeding a raw bounding-box crop puts every input out of distribution.
+mandatory - feeding a raw bounding-box crop puts every input out of distribution.
 
 Costumes are represented as a clothing-tag probability vector rather than an embedding. Tags are
 semantic, so the representation is invariant to art style; they describe garments, so it is invariant
@@ -61,7 +61,7 @@ ImageAnalyzer/
 └── searchStrings.tsv                # OCR search lists
 ```
 
-Folder name = the name reported by the analyzer. Faces do not need cropping — detection handles it.
+Folder name = the name reported by the analyzer. Faces do not need cropping - detection handles it.
 
 ## Quick start
 
@@ -100,7 +100,7 @@ curl -X POST http://localhost:3000/analyze -F "image=@test.jpg"
 
 ## Configuration
 
-`config.json` and `searchStrings.tsv` are re-read on every request — no restart needed.
+`config.json` and `searchStrings.tsv` are re-read on every request - no restart needed.
 
 ```json
 {
@@ -113,7 +113,7 @@ curl -X POST http://localhost:3000/analyze -F "image=@test.jpg"
 }
 ```
 
-Thresholds are **not comparable across tasks** — each model has its own cosine distribution. A value
+Thresholds are **not comparable across tasks** - each model has its own cosine distribution. A value
 like 0.8, reasonable for CCIP, rejects every genuine ArcFace match.
 
 Faces are reported in two bands so that a photographed photo is not accepted as the real thing but is
@@ -124,8 +124,8 @@ scores 0.1474 and is not reported at all.
 | Band | Range | Meaning |
 |---|---|---|
 | `faces` | ≥ `face` (0.45) | accepted as the real subject |
-| `facesWeak` | `faceWeak` … `face` | photographed photo or degraded capture — do not act on automatically |
-| — | < `faceWeak` (0.28) | not reported |
+| `facesWeak` | `faceWeak` … `face` | photographed photo or degraded capture - do not act on automatically |
+| - | < `faceWeak` (0.28) | not reported |
 
 A match must clear both the absolute threshold and the **top-1 minus top-2 margin**. If top-1 and
 top-2 are close, the match is meaningless regardless of its absolute score, and reporting "unknown"
@@ -151,7 +151,7 @@ npm run search-strings -- --list
 ## Growing the gallery
 
 Nothing is ever added to the gallery automatically. When a crop matches a registered identity with
-confidence, the crop is written to `data/_candidates/<kind>/<name>/` and recorded separately — the
+confidence, the crop is written to `data/_candidates/<kind>/<name>/` and recorded separately - the
 gallery itself is untouched. You review the folder and promote what is worth keeping.
 
 ```bash
@@ -162,17 +162,17 @@ npm run candidates -- --clear                     # discard everything collected
 ```
 
 Auto-registration was rejected deliberately: a wrong entry silently changes later matching and feeds
-the next wrong entry, and since the crop exists only in memory there would be nothing to inspect —
+the next wrong entry, and since the crop exists only in memory there would be nothing to inspect -
 the only possible undo is deleting every auto entry blindly. Reviewing costs almost nothing here
 because there is no training; registering is embedding extraction into SQLite.
 
 Unmatched crops are not collected. The purpose is to broaden coverage of identities you already
-registered, and for faces only the `faces` band is collected — a photographed photo must not end up
+registered, and for faces only the `faces` band is collected - a photographed photo must not end up
 in the gallery. For characters the most valuable candidate is one WD-Tagger confirms but CCIP misses,
 since that is exactly a rendering CCIP does not yet cover.
 
 Runaway collection is bounded by `dedupThreshold` (skip anything within 0.95 cosine of an existing
-candidate — the embedding is already computed, so this is free) and `maxPerName`.
+candidate - the embedding is already computed, so this is free) and `maxPerName`.
 
 ## Diagnostics
 

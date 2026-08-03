@@ -1,5 +1,5 @@
 /**
- * 후보 관리 — 분석 중 모아둔 크롭을 검토하고 갤러리로 넘긴다.
+ * 후보 관리 - 분석 중 모아둔 크롭을 검토하고 갤러리로 넘긴다.
  *
  * 갤러리에 자동으로 들어가는 것은 없다. 여기서 추린 것만 data/faces|characters|costumes/ 로
  * 옮겨지고, 그 다음 register를 돌려야 실제 등록된다.
@@ -41,7 +41,7 @@ function list(kind?: Kind, name?: string): void {
   }
 
   for (const [key, group] of byGroup) {
-    console.log(`\n${key} — ${group.length}건`);
+    console.log(`\n${key} - ${group.length}건`);
     for (const r of group) {
       const exists = fs.existsSync(path.join(DATA_DIR, r.file_path)) ? "" : "  [파일 없음]";
       console.log(`  ${r.score.toFixed(4)}  ${r.source.padEnd(8)}  ${r.file_path}${exists}`);
@@ -81,7 +81,7 @@ function promote(kind: Kind, name: string): void {
     moved++;
   }
 
-  console.log(`✅ Promoted - kind: ${kind}, name: ${name}, moved: ${moved}, missing: ${missing}, dest: ${path.relative(PROJECT_ROOT, destDir)}`);
+  console.log(`Promoted - kind: ${kind}, name: ${name}, moved: ${moved}, missing: ${missing}, dest: ${path.relative(PROJECT_ROOT, destDir)}`);
   console.log(`   등록하려면: npm run register:${kind === "face" ? "faces" : kind === "character" ? "characters" : "costumes"}`);
 }
 
@@ -92,7 +92,7 @@ function clear(kind?: Kind, name?: string): void {
     if (fs.existsSync(p)) fs.rmSync(p);
   }
   const removed = deleteCandidates(kind, name);
-  console.log(`✅ Cleared - kind: ${kind ?? "all"}, name: ${name ?? "all"}, removed: ${removed}`);
+  console.log(`Cleared - kind: ${kind ?? "all"}, name: ${name ?? "all"}, removed: ${removed}`);
 }
 
 function main() {

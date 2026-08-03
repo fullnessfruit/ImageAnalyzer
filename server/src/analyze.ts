@@ -45,7 +45,7 @@ export interface Config {
    */
   characterAliases: Record<string, string>;
   /**
-   * 확정 매칭된 크롭을 data/_candidates/ 에 모아두는 설정. 갤러리에 자동으로 넣지는 않는다 —
+   * 확정 매칭된 크롭을 data/_candidates/ 에 모아두는 설정. 갤러리에 자동으로 넣지는 않는다 -
    * 사람이 검토해서 data/faces|characters|costumes/ 로 옮긴 뒤 register를 돌린다.
    */
   candidates: CandidateConfig;
@@ -53,7 +53,7 @@ export interface Config {
 
 /**
  * 임계값은 모델마다 코사인 분포가 달라 서로 비교 불가능한 스케일 위에 있다.
- * 얼굴은 실측 분포가 명확히 갈린다 — 실물 동일 인물 0.64~0.97, 사진 속 사진 0.32,
+ * 얼굴은 실측 분포가 명확히 갈린다 - 실물 동일 인물 0.64~0.97, 사진 속 사진 0.32,
  * 다른 인물 0.15. 그래서 0.45를 실물 경계로, 0.28을 보고 하한으로 둔다.
  * ArcFace에서 0.8 같은 값은 동일 인물조차 전부 기각한다.
  */
@@ -88,7 +88,7 @@ export interface AnalyzeResult {
 
 /**
  * 실사 인물. ArcFace는 5점 유사변환으로 정규 템플릿에 워프된 얼굴로만 학습되었으므로
- * 랜드마크가 없으면 임베딩이 분포 밖이 된다 — 등록하지도 질의하지도 않는다.
+ * 랜드마크가 없으면 임베딩이 분포 밖이 된다 - 등록하지도 질의하지도 않는다.
  */
 async function recognizeFaces(
   imageBuffer: Buffer,
@@ -145,12 +145,12 @@ async function recognizeFaces(
 /**
  * 캐릭터. **등록한 캐릭터만 보고한다.**
  *
- * 신원 판정의 주축은 CCIP다 — 갤러리 기반이라 등록만 되어 있으면 어떤 캐릭터든 잡고,
+ * 신원 판정의 주축은 CCIP다 - 갤러리 기반이라 등록만 되어 있으면 어떤 캐릭터든 잡고,
  * 서로 다른 작가·화풍의 같은 캐릭터를 positive로 학습해서 등록 1장으로도 의상·구도가
  * 달라진 이미지를 매칭한다(실측: 1장 등록 → 다른 의상 0.85, 다른 교복 0.87).
  *
  * WD-Tagger는 보조 신호일 뿐이다. 어휘가 약 2,751종으로 고정돼 있어 신작 캐릭터를
- * 아예 모른다 — 蓮ノ空 학원 캐릭터는 12명 전원이 어휘에 없다. 그래서 태거가 낸 이름은
+ * 아예 모른다 - 蓮ノ空 학원 캐릭터는 12명 전원이 어휘에 없다. 그래서 태거가 낸 이름은
  * 갤러리에 등록된 것만 통과시킨다.
  */
 async function recognizeCharacters(imageBuffer: Buffer, persons: Detection[], cfg: Config): Promise<Match[]> {
@@ -191,7 +191,7 @@ async function recognizeCharacters(imageBuffer: Buffer, persons: Detection[], cf
       }
     }
 
-    // 태거만 확정하고 CCIP는 놓친 크롭이 갤러리에 가장 필요한 이미지다 —
+    // 태거만 확정하고 CCIP는 놓친 크롭이 갤러리에 가장 필요한 이미지다 -
     // 그 화풍·구도를 CCIP가 아직 못 잡고 있다는 뜻이므로.
     if (confirmed && embedding) {
       await collectCandidate({
@@ -215,7 +215,7 @@ async function recognizeCharacters(imageBuffer: Buffer, persons: Detection[], cf
  * 캐릭터 의상.
  *
  * 요구사항이 "다른 그림체로 그려져도, 다른 캐릭터가 입고 있어도 같은 의상으로 발견"이라
- * CLIP·CCIP 임베딩은 쓸 수 없다 — 전자는 화풍을, 후자는 착용자 신원을 함께 인코딩하므로
+ * CLIP·CCIP 임베딩은 쓸 수 없다 - 전자는 화풍을, 후자는 착용자 신원을 함께 인코딩하므로
  * 둘 중 하나만 바뀌어도 거리가 벌어진다. 대신 WD-Tagger의 의류 태그 확률 벡터를 쓴다.
  * 태그는 의미 단위라 화풍에 불변이고, 옷만 기술하므로 착용자에도 불변이다.
  * 머리·얼굴은 마스킹해 신원 단서를 제거한다.

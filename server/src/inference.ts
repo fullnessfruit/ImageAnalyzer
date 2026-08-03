@@ -46,15 +46,15 @@ let clothingTagIndices: number[] = [];
 async function tryLoad(modelsDir: string, name: ModelName, label: string): Promise<ort.InferenceSession | null> {
   const p = getModelPath(modelsDir, name);
   if (!fs.existsSync(p)) {
-    console.warn(`⚠️  Model missing - name: ${label}, path: ${p} (해당 기능 비활성)`);
+    console.warn(`Model missing - name: ${label}, path: ${p} (해당 기능 비활성)`);
     return null;
   }
   try {
     const session = await ort.InferenceSession.create(p, { intraOpNumThreads: 4, graphOptimizationLevel: "all" });
-    console.log(`✅ Model loaded - name: ${label}, inputs: ${session.inputNames.join(",")}, outputs: ${session.outputNames.length}`);
+    console.log(`Model loaded - name: ${label}, inputs: ${session.inputNames.join(",")}, outputs: ${session.outputNames.length}`);
     return session;
   } catch (e: any) {
-    console.error(`❌ Model load failed - name: ${label}, path: ${p}, error: ${e.message}`);
+    console.error(`Model load failed - name: ${label}, path: ${p}, error: ${e.message}`);
     return null;
   }
 }
@@ -85,7 +85,7 @@ export async function loadModels(modelsDir: string): Promise<void> {
 
 /**
  * 의류·장신구 태그 판별. 태그 이름에 아래 패턴이 있으면 의상 구성요소로 본다.
- * 머리색·눈색·체형 같은 착용자 고유 속성은 의도적으로 제외한다 — 그래야 다른 캐릭터가
+ * 머리색·눈색·체형 같은 착용자 고유 속성은 의도적으로 제외한다 - 그래야 다른 캐릭터가
  * 같은 옷을 입어도 같은 의상으로 매칭된다.
  */
 const CLOTHING_PATTERN =
@@ -94,7 +94,7 @@ const CLOTHING_PATTERN =
 function loadWdTags(modelsDir: string): void {
   const csvPath = getModelPath(modelsDir, "wd-tags");
   if (!fs.existsSync(csvPath)) {
-    console.warn(`⚠️  WD tag list missing - path: ${csvPath}`);
+    console.warn(`WD tag list missing - path: ${csvPath}`);
     return;
   }
   const lines = fs.readFileSync(csvPath, "utf-8").split("\n");
@@ -157,7 +157,7 @@ export interface Detection {
   box: Box;
   confidence: number;
   classId: number;
-  /** SCRFD만 제공. [x,y] × 5 — 좌눈, 우눈, 코, 좌입꼬리, 우입꼬리. */
+  /** SCRFD만 제공. [x,y] × 5 - 좌눈, 우눈, 코, 좌입꼬리, 우입꼬리. */
   landmarks?: number[];
 }
 
@@ -174,7 +174,7 @@ export async function cropRegion(imageBuffer: Buffer, box: Box): Promise<Buffer>
 
 /**
  * box 영역을 크롭하고 그 안에 들어오는 maskBoxes를 회색으로 덮는다.
- * 의상 인식에서 머리·얼굴을 지우는 데 쓴다 — 착용자 신원 정보를 제거해야
+ * 의상 인식에서 머리·얼굴을 지우는 데 쓴다 - 착용자 신원 정보를 제거해야
  * 다른 캐릭터가 같은 옷을 입어도 같은 의상으로 매칭된다.
  * 머리카락까지 덮도록 얼굴 위쪽에 높이의 60%를 더 확장한다.
  */
@@ -260,7 +260,7 @@ function toNCHW(data: Buffer, size: number, scale: number, mean: number[], std: 
 }
 
 // ============================================================
-// 실사 얼굴 검출 (SCRFD det_10g) — 랜드마크 포함
+// 실사 얼굴 검출 (SCRFD det_10g) - 랜드마크 포함
 // ============================================================
 
 const SCRFD_SIZE = 640;
@@ -287,7 +287,7 @@ export async function detectFaces(imageBuffer: Buffer, confThreshold = 0.5): Pro
   const kpsOut = byCols(10);
 
   if (scoreOut.length !== 3 || bboxOut.length !== 3) {
-    console.error(`❌ SCRFD output shape unexpected - scores: ${scoreOut.length}, bboxes: ${bboxOut.length}, kps: ${kpsOut.length}`);
+    console.error(`SCRFD output shape unexpected - scores: ${scoreOut.length}, bboxes: ${bboxOut.length}, kps: ${kpsOut.length}`);
     return [];
   }
 
@@ -432,7 +432,7 @@ export function alignFace(raw: RawImage, landmarks: number[]): Buffer {
 
 /**
  * 정합된 얼굴에서 ArcFace 임베딩 추출. 원본과 좌우반전을 각각 임베딩해
- * L2 정규화 후 평균한다(flip TTA) — 얼굴인식의 표준 기법으로 포즈 편향을 줄인다.
+ * L2 정규화 후 평균한다(flip TTA) - 얼굴인식의 표준 기법으로 포즈 편향을 줄인다.
  */
 export async function extractFaceEmbedding(aligned: Buffer): Promise<Float32Array | null> {
   if (!arcfaceSession) return null;
@@ -559,7 +559,7 @@ export async function detectAnimePersons(imageBuffer: Buffer, conf = 0.35): Prom
 }
 
 // ============================================================
-// CCIP — 캐릭터 신원 임베딩
+// CCIP - 캐릭터 신원 임베딩
 // ============================================================
 
 /**
@@ -582,7 +582,7 @@ export async function extractCcipEmbedding(imageBuffer: Buffer): Promise<Float32
 }
 
 // ============================================================
-// WD-Tagger — 캐릭터 이름(제로샷) + 의상 태그 벡터
+// WD-Tagger - 캐릭터 이름(제로샷) + 의상 태그 벡터
 // ============================================================
 
 export interface TaggerResult {
