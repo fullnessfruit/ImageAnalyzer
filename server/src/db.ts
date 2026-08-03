@@ -50,7 +50,7 @@ export function initDB(dbDir: string): Database.Database {
     CREATE INDEX IF NOT EXISTS idx_candidates_lookup ON candidates (kind, name);
   `);
 
-  console.log(`✅ Database initialized - path: ${dbPath}`);
+  console.log(`Database initialized - path: ${dbPath}`);
   return db;
 }
 
@@ -144,7 +144,7 @@ export function countEmbeddings(kind: Kind): number {
 /**
  * 확정 매칭된 크롭을 갤러리에 바로 넣지 않고 후보로 모아둔다.
  *
- * 자동 등록을 하지 않는 이유 — 잘못 들어간 항목이 조용히 이후 매칭을 바꾸고, 되돌리려면
+ * 자동 등록을 하지 않는 이유 - 잘못 들어간 항목이 조용히 이후 매칭을 바꾸고, 되돌리려면
  * 어느 항목이 잘못됐는지 알아야 한다. 그런데 분석 중 잘라낸 크롭은 디스크에 파일이 없어
  * 눈으로 확인할 수가 없다. 결국 전부 지우는 맹목 롤백밖에 남지 않는다.
  * 후보를 파일로 남기고 사람이 추려서 data/ 로 옮기면 갤러리에는 승인된 것만 들어간다.

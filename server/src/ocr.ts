@@ -1,17 +1,17 @@
 /**
- * OCR — "검색 목록의 문자열이 이미지에 있는가"만 판정한다.
+ * OCR - "검색 목록의 문자열이 이미지에 있는가"만 판정한다.
  *
  * 전문(全文)을 조립하지 않는다. 요구사항이 목록 매칭뿐이라 읽기 순서 복원, 라인 결합,
  * 언어 폴백 판정이 전부 불필요하다.
  *
- * 핵심 설계 — greedy 디코딩 후 부분문자열 비교를 하지 않는다.
+ * 핵심 설계 - greedy 디코딩 후 부분문자열 비교를 하지 않는다.
  * greedy는 타임스텝마다 argmax를 취하므로 정답 후보 집합을 전혀 활용하지 못하고,
  * 정확 일치 확률이 문자당 정확도의 L제곱으로 떨어진다(5글자면 p=0.95라도 0.77).
  * 대신 CTC 격자 위에서 후보 문자열의 사후확률을 직접 계산한다. 탐색 공간이
  * |사전|^T 에서 검색어 개수로 붕괴하므로, 한 글자가 2위로 밀려도 매칭이 살아남는다.
  *
  * 매칭 규칙: 한 줄 = 하나의 리스트. 줄 안의 탭 구분 파트는 모두 존재해야 한다(AND).
- * 줄끼리는 OR — 한 리스트라도 일치하면 성공.
+ * 줄끼리는 OR - 한 리스트라도 일치하면 성공.
  */
 
 import * as ort from "onnxruntime-node";
@@ -47,7 +47,7 @@ export function isOcrReady(): boolean {
 export async function initOCR(modelsDir: string): Promise<void> {
   const detPath = getModelPath(modelsDir, "ocr-det");
   if (!fs.existsSync(detPath)) {
-    console.warn(`⚠️  OCR detection model missing - path: ${detPath} (OCR 비활성)`);
+    console.warn(`OCR detection model missing - path: ${detPath} (OCR 비활성)`);
     return;
   }
   detSession = await ort.InferenceSession.create(detPath, { intraOpNumThreads: 4 });
@@ -59,7 +59,7 @@ export async function initOCR(modelsDir: string): Promise<void> {
     const recPath = getModelPath(modelsDir, model);
     const dictPath = getModelPath(modelsDir, dict);
     if (!fs.existsSync(recPath) || !fs.existsSync(dictPath)) {
-      console.warn(`⚠️  OCR rec model missing - lang: ${lang}`);
+      console.warn(`OCR rec model missing - lang: ${lang}`);
       continue;
     }
 
@@ -77,10 +77,10 @@ export async function initOCR(modelsDir: string): Promise<void> {
     for (let i = 0; i < chars.length; i++) if (!charIndex.has(chars[i])) charIndex.set(chars[i], i + 1);
 
     recModels.set(lang, { session, chars, charIndex });
-    console.log(`✅ OCR rec loaded - lang: ${lang}, classes: ${chars.length + 1}`);
+    console.log(`OCR rec loaded - lang: ${lang}, classes: ${chars.length + 1}`);
   }
 
-  console.log(`✅ OCR ready - det: yes, rec: ${[...recModels.keys()].join(",")}`);
+  console.log(`OCR ready - det: yes, rec: ${[...recModels.keys()].join(",")}`);
 }
 
 // ============================================================
@@ -147,7 +147,7 @@ for (const group of CONFUSION_GROUPS) {
  * 한 위치에서 받아들일 문자들. 표기 흔들림(가나 종류, 전각/반각, 대소문자)과
  * OCR 혼동을 모두 여기서 흡수한다.
  *
- * 문자열 변형을 조합으로 늘리지 않는 이유 — 혼동 문자가 여러 위치에 있으면 변형 수가
+ * 문자열 변형을 조합으로 늘리지 않는 이유 - 혼동 문자가 여러 위치에 있으면 변형 수가
  * 지수로 늘어난다. 격자 스코어링에서 위치마다 대체 문자들의 최대 확률을 쓰면 같은 효과를
  * 선형 비용으로 얻는다.
  */
@@ -177,7 +177,7 @@ function alternativesFor(ch: string): string[] {
 const DET_THRESH = 0.3;
 /**
  * 박스 점수는 바운딩 박스 영역의 확률 평균으로 낸다(PaddleOCR box_score_fast와 동일).
- * 키워드 스포팅에서는 재현율이 정밀도보다 훨씬 중요하다 — 잉여 영역은 어떤 검색어와도
+ * 키워드 스포팅에서는 재현율이 정밀도보다 훨씬 중요하다 - 잉여 영역은 어떤 검색어와도
  * 매칭되지 않고 사라질 뿐이지만, 놓친 영역은 복구할 방법이 없다.
  */
 const DET_BOX_THRESH = 0.4;
@@ -233,7 +233,7 @@ async function detectAtScale(src: RawSrc, limitSide: number): Promise<TextBox[]>
   const results = await detSession.run({
     [detSession.inputNames[0]]: new ort.Tensor("float32", input, [1, 3, newH, newW]),
   });
-  // 출력명이 sigmoid_0.tmp_0 — 이미 확률맵이다. 추가 활성화가 필요 없다.
+  // 출력명이 sigmoid_0.tmp_0 - 이미 확률맵이다. 추가 활성화가 필요 없다.
   const prob = results[detSession.outputNames[0]].data as Float32Array;
 
   const binary = new Uint8Array(pixels);
@@ -394,7 +394,7 @@ function mergeIntoLines(boxes: TextBox[]): TextBox[] {
 }
 
 // ============================================================
-// 인식 — CTC 확률 격자
+// 인식 - CTC 확률 격자
 // ============================================================
 
 const REC_HEIGHT = 48;
@@ -742,7 +742,7 @@ export async function performOCR(
   for (const lang of neededLangs) {
     const model = recModels.get(lang);
     if (!model) {
-      console.warn(`⚠️  OCR rec model unavailable - lang: ${lang} (해당 언어 검색어는 매칭 불가)`);
+      console.warn(`OCR rec model unavailable - lang: ${lang} (해당 언어 검색어는 매칭 불가)`);
       continue;
     }
     latticesByLang.set(lang, await recognizeBatch(model, strips));
@@ -758,7 +758,7 @@ export async function performOCR(
 
     const sets = toClassIdSets(part, model);
     if (!sets) {
-      console.warn(`⚠️  Search part not representable - part: "${part}", lang: ${lang} (사전에 없는 문자)`);
+      console.warn(`Search part not representable - part: "${part}", lang: ${lang} (사전에 없는 문자)`);
       return 0;
     }
 

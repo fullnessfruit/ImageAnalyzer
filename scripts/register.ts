@@ -1,5 +1,5 @@
 /**
- * 갤러리 등록 — face / character / costume 공통 드라이버.
+ * 갤러리 등록 - face / character / costume 공통 드라이버.
  *
  *   data/faces/<인물명>/*.jpg      → SCRFD 최대 얼굴 → 랜드마크 정합 → ArcFace
  *   data/characters/<캐릭터명>/*   → 애니 인물 검출 → CCIP
@@ -58,15 +58,15 @@ async function extractFace(buffer: Buffer): Promise<Float32Array | null> {
   const faces = await detectFaces(buffer);
   const best = largest(faces);
   if (!best) {
-    console.warn(`  ⚠️  no face detected`);
+    console.warn(`  no face detected`);
     return null;
   }
   if (!best.landmarks) {
-    console.warn(`  ⚠️  no landmarks — 정합 불가라 등록하지 않는다`);
+    console.warn(`  no landmarks - 정합 불가라 등록하지 않는다`);
     return null;
   }
   if (!faceQualityOk(best)) {
-    console.warn(`  ⚠️  low quality face - box: ${best.box.map(Math.round).join(",")}`);
+    console.warn(`  low quality face - box: ${best.box.map(Math.round).join(",")}`);
     return null;
   }
   const raw = await loadRaw(buffer);
@@ -95,7 +95,7 @@ async function extractCostume(buffer: Buffer): Promise<Float32Array | null> {
   const tagged = await runTagger(region);
   if (!tagged) return null;
   if (tagged.topClothing.length === 0) {
-    console.warn(`  ⚠️  no clothing tags detected`);
+    console.warn(`  no clothing tags detected`);
     return null;
   }
   console.log(`  tags: ${tagged.topClothing.slice(0, 8).map((t) => `${t.name}:${t.prob.toFixed(2)}`).join(" ")}`);
@@ -138,7 +138,7 @@ async function registerKind(spec: KindSpec): Promise<void> {
         continue;
       }
 
-      console.log(`[${spec.kind}] ${name} — ${file}`);
+      console.log(`[${spec.kind}] ${name} - ${file}`);
       try {
         const embedding = await spec.extract(fs.readFileSync(abs));
         if (!embedding) {
@@ -148,14 +148,14 @@ async function registerKind(spec: KindSpec): Promise<void> {
         insertEmbedding(spec.kind, spec.space, name, rel, embedding);
         registered++;
       } catch (e: any) {
-        console.error(`  ❌ failed - path: ${rel}, error: ${e.message}`);
+        console.error(`  failed - path: ${rel}, error: ${e.message}`);
         failed++;
       }
     }
   }
 
   console.log(
-    `✅ Register done - kind: ${spec.kind}, registered: ${registered}, skipped: ${skipped}, failed: ${failed}, total: ${countEmbeddings(spec.kind)}`,
+    `Register done - kind: ${spec.kind}, registered: ${registered}, skipped: ${skipped}, failed: ${failed}, total: ${countEmbeddings(spec.kind)}`,
   );
 }
 
