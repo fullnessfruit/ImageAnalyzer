@@ -15,6 +15,7 @@ full-body ReID are explicitly out of scope.
 ```bash
 setup.bat                            # First run: deps, dirs, ONNX download (~890 MB). ./setup.sh on POSIX
 npm run server                       # Start analysis server (port 3000)
+npm run server:ocr                   # Start with OCR only (no vision models). server-ocr.bat on Windows
 npm run dev                          # Dev mode with auto-reload
 npm run register:all                 # Register face + character + costume galleries
 npm run candidates -- --list         # Review collected crops that are waiting for approval
@@ -28,6 +29,13 @@ takes `--promote <kind> <name>` and `--clear [kind] [name]`, where kind is `face
 `costume`.
 
 ## Architecture
+- **The caller owns the search list.** `POST /analyze` takes it as the multipart field
+  `searchStrings` (TSV text); `searchStrings.tsv` on disk is only the fallback for manual runs.
+  A caller whose keywords change (the Chrome extension) must send them, otherwise "not in the
+  list" and "in the list but unreadable" are indistinguishable in the answer.
+- **OCR-only mode** (`--ocr-only` / `IMAGEANALYZER_OCR_ONLY=1`) skips downloading and loading
+  the six vision models. Detectors are null-safe, so `analyzeImage` still runs and simply
+  returns empty faces/characters/costumes.
 - **OCR is keyword spotting, not reading.** Search strings are scored directly against the CTC
   probability lattice; there is no full-text assembly and no substring comparison. Per-position
   alternative character sets absorb kana/width/case variation and OCR confusions.

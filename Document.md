@@ -34,7 +34,7 @@
 
 이미지를 입력받아 네 가지를 판정하는 로컬 API 서버. 크롬 확장 프로그램에서 `POST /analyze`로 호출.
 
-1. **OCR** - `searchStrings.tsv`의 리스트 중 **하나라도** 이미지에 있는가
+1. **OCR** - 요청이 준 검색 리스트 중 **하나라도** 이미지에 있는가 (미전달 시 `searchStrings.tsv`)
 2. **실사 인물** - 등록된 인물의 얼굴이 있는가
 3. **캐릭터** - 애니 캐릭터가 누구인가
 4. **캐릭터 의상** - 등록된 의상을 입고 있는가
@@ -165,7 +165,11 @@ ArcFace / CCIP / 태그 벡터는 차원도 기하도 다르다. 섞어서 코�
 → JSON
 ```
 
-`config.json`과 `searchStrings.tsv`는 요청마다 다시 읽어 재시작 없이 반영된다.
+`config.json`은 요청마다 다시 읽어 재시작 없이 반영된다.
+
+**검색 리스트는 요청이 정본이다.** `POST /analyze`의 multipart 필드 `searchStrings`(TSV 텍스트)로 받고, 그 필드가 없을 때만 `searchStrings.tsv`로 물러선다. 호출자(크롬 확장)의 키워드는 수시로 바뀌는데 서버가 자기 파일만 본다면 "목록에 없어서 못 찾음"과 "목록에 있는데 못 읽음"이 구분되지 않아, 호출자 입장에서 결과를 해석할 수 없다. 응답 로그의 `listSource`가 어느 쪽을 썼는지 알려준다.
+
+**OCR 전용 기동**: `--ocr-only` 인자 또는 `IMAGEANALYZER_OCR_ONLY=1`. 비전 모델 6개(face-det 17MB, arcface 167MB, anime-face-det 43MB, anime-person-det 43MB, ccip 144MB, wd-tagger 362MB = 약 772MB)를 **다운로드도 로드도 하지 않는다.** OCR 모델 3개(det 4.6MB + rec-ch 81MB + rec-ko 13MB)만 쓰므로 메모리가 작은 호스트에서 돌릴 수 있다. 탐지 함수들이 세션 null을 빈 배열로 처리하도록 되어 있어 `analyzeImage`는 그대로 통과하고 `faces`/`facesWeak`/`characters`/`costumes`만 빈 배열이 된다. `GET /health`가 `ocrOnly`로 모드를 보고하고, `npm run server:ocr`(Windows는 `server-ocr.bat`)로 기동한다.
 
 ### 성능 특성
 i5-3550(AVX2 없음) 기준 이미지당 9~30초. **인식(rec)이 전체의 80~90%**를 차지한다.
@@ -191,9 +195,10 @@ i5-3550(AVX2 없음) 기준 이미지당 9~30초. **인식(rec)이 전체의 80~
 `characterAliases`는 WD-Tagger의 danbooru 로마자 태그를 갤러리 이름 표기(보통 일본어)로
 통일한다. 파일이 없거나 깨져도 기본값으로 동작한다.
 
-### searchStrings.tsv
-한 줄 = 하나의 리스트. 줄 안의 탭 구분 파트는 **모두** 존재해야 하고(AND), 줄끼리는 OR라
-**한 리스트라도** 일치하면 성공.
+### 검색 리스트 (TSV 형식)
+요청의 `searchStrings` 필드나 `searchStrings.tsv` 파일 모두 같은 형식이다. 한 줄 = 하나의
+리스트. 줄 안의 탭 구분 파트는 **모두** 존재해야 하고(AND), 줄끼리는 OR라 **한 리스트라도**
+일치하면 성공. 파일은 요청이 목록을 주지 않는 수동 실행·CLI용 예비 경로다.
 
 ```
 大西亜玖璃

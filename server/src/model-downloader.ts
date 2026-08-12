@@ -172,11 +172,22 @@ function fetchToFile(url: string, dest: string, redirectsLeft: number): Promise<
   });
 }
 
-export async function ensureModelsDownloaded(modelsDir: string): Promise<void> {
+/** OCR 판정에만 필요한 모델. OCR 전용 기동에서 받고 로드하는 대상이 이것뿐이다. */
+export const OCR_MODEL_NAMES = ["ocr-det", "ocr-rec-ch", "ocr-dict-ch", "ocr-rec-ko", "ocr-dict-ko"] as const;
+
+/**
+ * `ocrOnly`이면 OCR 모델(약 99MB)만 받는다. 나머지 6개(약 772MB)는 받지도 로드하지도
+ * 않으므로 메모리가 작은 호스트에서도 기동할 수 있다.
+ */
+export async function ensureModelsDownloaded(modelsDir: string, ocrOnly = false): Promise<void> {
   fs.mkdirSync(modelsDir, { recursive: true });
 
+  const wanted = ocrOnly
+    ? (Object.entries(MODELS) as [string, ModelInfo][]).filter(([name]) => (OCR_MODEL_NAMES as readonly string[]).includes(name))
+    : (Object.entries(MODELS) as [string, ModelInfo][]);
+
   const failed: string[] = [];
-  for (const [name, info] of Object.entries(MODELS) as [string, ModelInfo][]) {
+  for (const [name, info] of wanted) {
     const dest = path.join(modelsDir, info.filename);
     if (fs.existsSync(dest) && fs.statSync(dest).size > 0) continue;
 
@@ -192,7 +203,7 @@ export async function ensureModelsDownloaded(modelsDir: string): Promise<void> {
   if (failed.length > 0) {
     console.error(`Model download incomplete - failed: ${failed.join(", ")} (해당 기능이 비활성화된다)`);
   } else {
-    console.log(`All models present - count: ${Object.keys(MODELS).length}, dir: ${modelsDir}`);
+    console.log(`All models present - count: ${wanted.length}${ocrOnly ? " (OCR only)" : ""}, dir: ${modelsDir}`);
   }
 }
 
