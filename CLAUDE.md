@@ -16,6 +16,7 @@ full-body ReID are explicitly out of scope.
 setup.bat                            # First run: deps, dirs, ONNX download (~890 MB). ./setup.sh on POSIX
 npm run server                       # Start analysis server (port 3000)
 npm run server:ocr                   # Start with OCR only (no vision models). server-ocr.bat on Windows
+npm run worker                       # Poll the OCR broker instead of serving HTTP. worker.bat on Windows
 npm run dev                          # Dev mode with auto-reload
 npm run register:all                 # Register face + character + costume galleries
 npm run candidates -- --list         # Review collected crops that are waiting for approval
@@ -36,6 +37,10 @@ takes `--promote <kind> <name>` and `--clear [kind] [name]`, where kind is `face
 - **OCR-only mode** (`--ocr-only` / `IMAGEANALYZER_OCR_ONLY=1`) skips downloading and loading
   the six vision models. Detectors are null-safe, so `analyzeImage` still runs and simply
   returns empty faces/characters/costumes.
+- **Worker mode** (`npm run worker`) reverses the direction: instead of serving HTTP it polls
+  a broker for jobs. The Chrome extension runs on a public host and this runs behind NAT, so
+  the extension cannot call in. OCR only, and the gallery DB is never opened. Jobs carry image
+  URLs, not bytes, and the worker downloads them over its own connection.
 - **OCR is keyword spotting, not reading.** Search strings are scored directly against the CTC
   probability lattice; there is no full-text assembly and no substring comparison. Per-position
   alternative character sets absorb kana/width/case variation and OCR confusions.
@@ -70,6 +75,8 @@ takes `--promote <kind> <name>` and `--clear [kind] [name]`, where kind is `face
   review queue; `kind` × `space` keeps embedding spaces from being compared
 - `server/src/model-downloader.ts`: HuggingFace redirect handling
 - `server/src/index.ts`: HTTP layer only
+- `server/src/worker.ts`: broker-polling mode for running behind NAT
+- `server/src/config.ts`: config.json loader shared by the server, the CLI and the worker
 
 ## Detailed Documentation
 

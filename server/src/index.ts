@@ -28,31 +28,12 @@ import { initDB, countEmbeddings } from "./db";
 import { ensureModelsDownloaded } from "./model-downloader";
 import { initOCR, parseSearchLists, isOcrReady } from "./ocr";
 import { loadModels, hasArcFace, hasCcip, hasWdTagger } from "./inference";
-import { analyzeImage, Config, DEFAULT_CONFIG } from "./analyze";
+import { analyzeImage } from "./analyze";
+import { loadConfig, PROJECT_ROOT } from "./config";
 
-const PROJECT_ROOT = path.resolve(__dirname, "..", "..");
 const MODELS_DIR = path.join(PROJECT_ROOT, "models");
 const DB_DIR = path.join(PROJECT_ROOT, "db");
-const CONFIG_PATH = path.join(PROJECT_ROOT, "config.json");
 const SEARCH_STRINGS_PATH = path.join(PROJECT_ROOT, "searchStrings.tsv");
-
-/** 설정 파일이 없거나 깨져도 서버는 계속 동작해야 한다. */
-export function loadConfig(): Config {
-  try {
-    const raw = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf-8"));
-    return {
-      similarityThreshold: { ...DEFAULT_CONFIG.similarityThreshold, ...(raw.similarityThreshold ?? {}) },
-      margin: { ...DEFAULT_CONFIG.margin, ...(raw.margin ?? {}) },
-      ocr: { ...DEFAULT_CONFIG.ocr, ...(raw.ocr ?? {}) },
-      wdTagger: { ...DEFAULT_CONFIG.wdTagger, ...(raw.wdTagger ?? {}) },
-      characterAliases: { ...DEFAULT_CONFIG.characterAliases, ...(raw.characterAliases ?? {}) },
-      candidates: { ...DEFAULT_CONFIG.candidates, ...(raw.candidates ?? {}) },
-    };
-  } catch (e: any) {
-    console.warn(`Config load failed - path: ${CONFIG_PATH}, error: ${e.message} (기본값 사용)`);
-    return DEFAULT_CONFIG;
-  }
-}
 
 /** 요청이 목록을 주지 않았을 때만 쓰는 예비 경로 (CLI·수동 테스트). */
 export function loadSearchLists() {
