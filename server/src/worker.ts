@@ -31,10 +31,14 @@
 
 import path from "path";
 import nodeCrypto from "crypto";
+import { execFile } from "child_process";
+import { promisify } from "util";
 
 import { ensureModelsDownloaded } from "./model-downloader";
 import { initOCR, parseSearchLists, performOCR } from "./ocr";
 import { loadConfig, PROJECT_ROOT } from "./config";
+
+const execFileAsync = promisify(execFile);
 
 const MODELS_DIR = path.join(PROJECT_ROOT, "models");
 
@@ -42,6 +46,23 @@ const BROKER_URL = (process.env.OCR_BROKER_URL || "http://localhost:3100").repla
 const BROKER_SECRET = process.env.OCR_BROKER_SECRET || "";
 const INTERVAL_MS = Number(process.env.OCR_WORKER_INTERVAL_MS || 60000);
 const WORKER_ID = process.env.OCR_WORKER_ID || `imageanalyzer-${process.pid}`;
+
+/**
+ * 저배터리 자동 종료. **기본은 꺼져 있고**(0), 값을 주면 그 퍼센트에서 PC를 끈다.
+ *
+ * 이 워커는 노트북에서 무인으로 돌면서 OCR로 CPU를 태운다. 방전으로 그냥 꺼지는 것보다
+ * 통제된 종료가 낫기 때문에 임계치를 두는 것이지, 절전 기능이 아니다.
+ *
+ * 안전장치 세 가지:
+ *  - **방전 중일 때만** 센다. 충전기를 꽂고 있으면 몇 퍼센트든 끄지 않는다
+ *  - 폴링 틱과 무관한 자체 타이머로 돈다. 틱 경계에서만 보면 job이 밀렸을 때 배수 시간
+ *    동안 못 보게 되는데, 배터리는 그 사이에도 계속 준다
+ *  - 즉시 끄지 않고 `shutdown /t`로 유예를 준다. 진행 중인 job이 결과를 올릴 시간이 되고,
+ *    그 사이 `shutdown /a`로 취소할 수도 있다
+ */
+const BATTERY_SHUTDOWN_PERCENT = Number(process.env.OCR_WORKER_BATTERY_SHUTDOWN_PERCENT || 0);
+const BATTERY_CHECK_MS = Number(process.env.OCR_WORKER_BATTERY_CHECK_MS || 60000);
+const BATTERY_SHUTDOWN_GRACE_SEC = Number(process.env.OCR_WORKER_BATTERY_GRACE_SEC || 120);
 
 /** 한 장 받는 데 걸리는 상한. 죽은 연결에 대한 방어이지 성능 상한이 아니다. */
 const IMAGE_FETCH_TIMEOUT_MS = 60000;
@@ -310,8 +331,87 @@ async function tick(): Promise<void> {
   }
 }
 
+// ---------------------------------------------------------------------------
+// 저배터리 자동 종료
+// ---------------------------------------------------------------------------
+
+type BatteryState = { percent: number; onBattery: boolean };
+
+/**
+ * 배터리 상태를 읽는다. Windows 전용 - 다른 OS이거나 배터리가 없으면 null.
+ *
+ * WMI의 `BatteryStatus`는 1 = Discharging, 2 = AC 연결. 2가 아닌 값 중에도 충전 계열이
+ * 있지만(3 Fully Charged, 4 Low, 5 Critical...), **1만 방전으로 취급**한다 - 애매한 상태에서
+ * PC를 끄는 것보다 안 끄는 쪽이 안전하기 때문이다.
+ *
+ * WMIC가 아니라 PowerShell CIM을 쓴다: WMIC는 Windows에서 폐기 예정이고 최신 빌드에는
+ * 아예 없다.
+ */
+async function readBattery(): Promise<BatteryState | null> {
+  if (process.platform !== "win32") return null;
+  try {
+    const { stdout } = await execFileAsync(
+      "powershell",
+      [
+        "-NoProfile",
+        "-Command",
+        "$b = Get-CimInstance Win32_Battery | Select-Object -First 1; " +
+          "if ($null -eq $b) { 'none' } else { \"$($b.EstimatedChargeRemaining) $($b.BatteryStatus)\" }",
+      ],
+      { timeout: 20000, windowsHide: true },
+    );
+    const text = stdout.trim();
+    if (!text || text === "none") return null;
+    const [percentText, statusText] = text.split(/\s+/);
+    const percent = Number(percentText);
+    const status = Number(statusText);
+    if (!Number.isFinite(percent) || !Number.isFinite(status)) return null;
+    return { percent, onBattery: status === 1 };
+  } catch (e: any) {
+    // 읽기 실패로 PC를 끄지는 않는다. 다음 확인에서 다시 시도한다.
+    console.warn(`Battery read failed - error: ${e.message} (이번 확인은 건너뛴다)`);
+    return null;
+  }
+}
+
+let batteryShutdownStarted = false;
+
+/**
+ * 임계치 아래면 종료를 예약한다. 한 번 예약하면 다시 걸지 않는다 - 유예 시간 동안 계속
+ * 재예약하면 사용자가 `shutdown /a`로 취소해도 다음 확인에서 되살아난다.
+ */
+async function checkBatteryAndMaybeShutdown(): Promise<void> {
+  if (BATTERY_SHUTDOWN_PERCENT <= 0 || batteryShutdownStarted) return;
+
+  const battery = await readBattery();
+  if (!battery) return;
+  if (!battery.onBattery) return; // 충전 중이면 몇 퍼센트든 끄지 않는다
+  if (battery.percent > BATTERY_SHUTDOWN_PERCENT) return;
+
+  batteryShutdownStarted = true;
+  console.warn(
+    `Battery low, shutting down - percent: ${battery.percent}, threshold: ${BATTERY_SHUTDOWN_PERCENT}, graceSec: ${BATTERY_SHUTDOWN_GRACE_SEC} (취소: shutdown /a)`,
+  );
+  try {
+    await execFileAsync(
+      "shutdown",
+      ["/s", "/t", String(BATTERY_SHUTDOWN_GRACE_SEC), "/c", `ImageAnalyzer OCR worker: battery ${battery.percent}%`],
+      { timeout: 20000, windowsHide: true },
+    );
+  } catch (e: any) {
+    // 예약에 실패하면 재시도할 수 있어야 하므로 플래그를 되돌린다.
+    batteryShutdownStarted = false;
+    console.error(`Shutdown command failed - error: ${e.message}`);
+  }
+}
+
 async function main() {
   console.log(`Initializing OCR worker - broker: ${BROKER_URL}, intervalMs: ${INTERVAL_MS}, workerId: ${WORKER_ID}, auth: ${BROKER_SECRET ? "OCR1 signed" : "none"}`);
+  console.log(
+    BATTERY_SHUTDOWN_PERCENT > 0
+      ? `Battery shutdown armed - threshold: ${BATTERY_SHUTDOWN_PERCENT}%, checkMs: ${BATTERY_CHECK_MS}, graceSec: ${BATTERY_SHUTDOWN_GRACE_SEC} (방전 중일 때만)`
+      : "Battery shutdown disabled - set OCR_WORKER_BATTERY_SHUTDOWN_PERCENT to arm it",
+  );
 
   // 모델 로드 전에 확인한다. 주소가 틀렸으면 ONNX를 몇 초 들여 올릴 이유가 없다.
   await verifyBroker();
@@ -320,6 +420,15 @@ async function main() {
   await ensureModelsDownloaded(MODELS_DIR, true);
   await initOCR(MODELS_DIR);
   console.log("OCR worker ready");
+
+  // 폴링 루프와 독립적으로 돈다 - 아래 for(;;)는 한 틱이 밀리면 그만큼 늦어지는데,
+  // 배터리는 그 사이에도 계속 줄기 때문이다. 첫 확인은 즉시.
+  if (BATTERY_SHUTDOWN_PERCENT > 0) {
+    void checkBatteryAndMaybeShutdown();
+    setInterval(() => {
+      void checkBatteryAndMaybeShutdown();
+    }, BATTERY_CHECK_MS).unref();
+  }
 
   // 겹치지 않게 한 틱이 끝난 뒤에 다음 간격을 잰다. OCR은 장당 수십 초라 setInterval이면
   // 앞 틱이 끝나기 전에 다음 틱이 겹칠 수 있다.
