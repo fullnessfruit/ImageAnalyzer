@@ -15,8 +15,8 @@ full-body ReID are explicitly out of scope.
 ```bash
 setup.bat                            # First run: deps, dirs, ONNX download (~890 MB). ./setup.sh on POSIX
 npm run server                       # Start analysis server (port 3000)
-npm run server:ocr                   # Start with OCR only (no vision models). server-ocr.bat on Windows
-npm run worker                       # Poll the OCR broker instead of serving HTTP. worker.bat on Windows
+npm run server:ocr                   # HTTP server, OCR only (no vision models). Manual curl API; no .bat launcher
+npm run worker                       # Poll the OCR broker instead of serving HTTP. server-ocr.bat on Windows
 npm run dev                          # Dev mode with auto-reload
 npm run register:all                 # Register face + character + costume galleries
 npm run candidates -- --list         # Review collected crops that are waiting for approval

@@ -76,15 +76,30 @@ Models (~890 MB) download automatically on first run.
 ### OCR only
 
 ```bash
-npm run server:ocr      # or server-ocr.bat on Windows
+npm run server:ocr
 ```
 
 Runs the server with the vision models (face / arcface / anime detectors / ccip / wd-tagger,
-~772 MB) neither downloaded nor loaded — only the OCR models (~99 MB) are used. `faces`,
+~772 MB) neither downloaded nor loaded - only the OCR models (~99 MB) are used. `faces`,
 `facesWeak`, `characters` and `costumes` always come back empty; `ocr` is unaffected. Use it
 when the caller only asks "does this image contain one of these strings?" or when the host is
 too small for the full model set. `IMAGEANALYZER_OCR_ONLY=1` does the same, and `GET /health`
 reports `ocrOnly`.
+
+### OCR worker (broker queue)
+
+```bash
+npm run worker          # or server-ocr.bat on Windows
+```
+
+Instead of serving HTTP, this polls a broker for jobs, runs OCR, and posts results back. It
+exists because the caller (a Chrome extension on a public host) cannot reach this machine -
+it sits behind NAT - so the direction is reversed and this side does the pulling. OCR only,
+same as above, and it never opens the gallery DB.
+
+It calls out to `OCR_BROKER_URL` and signs every request with `OCR_BROKER_SECRET`, so unlike
+the server mode there is nothing to bind and no port to open here. `server-ocr.bat` also arms
+the low-battery shutdown (25% while discharging) - see the comments in that file.
 
 ### API
 

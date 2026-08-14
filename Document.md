@@ -171,9 +171,11 @@ ArcFace / CCIP / 태그 벡터는 차원도 기하도 다르다. 섞어서 코�
 
 **검색 리스트는 요청이 정본이다.** `POST /analyze`의 multipart 필드 `searchStrings`(TSV 텍스트)로 받고, 그 필드가 없을 때만 `searchStrings.tsv`로 물러선다. 호출자(크롬 확장)의 키워드는 수시로 바뀌는데 서버가 자기 파일만 본다면 "목록에 없어서 못 찾음"과 "목록에 있는데 못 읽음"이 구분되지 않아, 호출자 입장에서 결과를 해석할 수 없다. 응답 로그의 `listSource`가 어느 쪽을 썼는지 알려준다.
 
-**워커 모드 (`npm run worker` / `worker.bat`)**: HTTP 서버 대신 브로커를 당겨 일한다. 호출자인 크롬 확장은 공인 주소를 가진 매우 사양이 낮은 머신에서 돌고 이 프로그램은 집 노트북(NAT 안)에서 도는데, 확장이 노트북을 호출할 수 없으므로 방향을 뒤집은 것이다. 서버 모드는 그대로 남아 있고 같은 기계에서 부를 수 있을 때 쓴다. 상세는 `server/src/worker.ts`.
+**워커 모드 (`npm run worker` / `server-ocr.bat`)**: HTTP 서버 대신 브로커를 당겨 일한다. 호출자인 크롬 확장은 공인 주소를 가진 매우 사양이 낮은 머신에서 돌고 이 프로그램은 집 노트북(NAT 안)에서 도는데, 확장이 노트북을 호출할 수 없으므로 방향을 뒤집은 것이다. 서버 모드는 그대로 남아 있고 같은 기계에서 부를 수 있을 때 쓴다. 상세는 `server/src/worker.ts`.
 
-**OCR 전용 기동**: `--ocr-only` 인자 또는 `IMAGEANALYZER_OCR_ONLY=1`. 비전 모델 6개(face-det 17MB, arcface 167MB, anime-face-det 43MB, anime-person-det 43MB, ccip 144MB, wd-tagger 362MB = 약 772MB)를 **다운로드도 로드도 하지 않는다.** OCR 모델 3개(det 4.6MB + rec-ch 81MB + rec-ko 13MB)만 쓰므로 메모리가 작은 호스트에서 돌릴 수 있다. 탐지 함수들이 세션 null을 빈 배열로 처리하도록 되어 있어 `analyzeImage`는 그대로 통과하고 `faces`/`facesWeak`/`characters`/`costumes`만 빈 배열이 된다. `GET /health`가 `ocrOnly`로 모드를 보고하고, `npm run server:ocr`(Windows는 `server-ocr.bat`)로 기동한다.
+**이 머신에는 `server-ocr.bat` 하나만 띄우면 된다.** 예전의 `server-ocr.bat`(HTTP 분석 서버 OCR 모드)은 부르는 데가 없어져서 삭제하고, 워커 스크립트가 그 이름을 물려받았다 - 익숙한 이름 하나로 합친 것이다. `npm run server:ocr`은 README의 수동 curl API용으로 남아 있으나 전용 런처는 없다. 워커는 그 서버와 통신하지 않는다: `performOCR`을 같은 프로세스에서 직접 부르고 밖으로는 브로커하고만 말한다. 크롬 확장 쪽도 HTTP 분석 서버를 호출하지 않는다 (`ocr-text-protocol.js`에 남은 것은 `blocksToTsv` / `splitFoundLines` / `matchedKeyword` 세 개의 순수 헬퍼뿐이며, 이름도 그래서 바뀌었다).
+
+**OCR 전용 기동**: `--ocr-only` 인자 또는 `IMAGEANALYZER_OCR_ONLY=1`. 비전 모델 6개(face-det 17MB, arcface 167MB, anime-face-det 43MB, anime-person-det 43MB, ccip 144MB, wd-tagger 362MB = 약 772MB)를 **다운로드도 로드도 하지 않는다.** OCR 모델 3개(det 4.6MB + rec-ch 81MB + rec-ko 13MB)만 쓰므로 메모리가 작은 호스트에서 돌릴 수 있다. 탐지 함수들이 세션 null을 빈 배열로 처리하도록 되어 있어 `analyzeImage`는 그대로 통과하고 `faces`/`facesWeak`/`characters`/`costumes`만 빈 배열이 된다. `GET /health`가 `ocrOnly`로 모드를 보고하고, `npm run server:ocr`로 기동한다 (전용 .bat 없음 - 그 이름은 이제 워커 런처다).
 
 ### 성능 특성
 i5-3550(AVX2 없음) 기준 이미지당 9~30초. **인식(rec)이 전체의 80~90%**를 차지한다.
@@ -381,6 +383,18 @@ NAT가 막는 건 *확장 → 노트북* 한 방향이라, 노트북이 브로�
 - 이미지를 **한 장도** 못 받으면 `error`를 실어 결과를 올리고 끝낸다. 재시도해도 같은 결과라
   job을 붙잡아 둘 이유가 없다. 일부만 받았으면 받은 만큼의 판정이 유효하므로 정상 결과로 올린다
 - 결과 업로드가 실패하면 job은 브로커에 그대로 남는다. 재시도가 곧 그 job의 재실행이다
+
+**저배터리 자동 종료 (`checkBatteryAndMaybeShutdown`)**
+
+무인으로 돌면서 OCR로 CPU를 태우는 프로세스라, 방전으로 그냥 꺼지는 것보다 통제된 종료가 낫다. 절전 기능이 아니라 데이터 보호 장치다.
+
+- `OCR_WORKER_BATTERY_SHUTDOWN_PERCENT` - **코드 기본값은 0(꺼짐)**, `server-ocr.bat`이 25로 켠다. 라이브러리 기본값은 안전한 쪽, 켜는 것은 런처의 책임
+- **방전 중일 때만 발동한다.** `Win32_Battery.BatteryStatus === 1`(Discharging)만 방전으로 보고, 3(Fully Charged)·4(Low) 같은 애매한 값은 세지 않는다 - 애매할 때 PC를 끄는 것보다 안 끄는 쪽이 안전하다. AC에 꽂혀 있으면 몇 퍼센트든 안 끈다
+- **폴링 틱과 별개의 `setInterval`로 돈다** (`OCR_WORKER_BATTERY_CHECK_MS`, 기본 60초). 틱 경계에서만 보면 job이 밀렸을 때 그 배수만큼 못 보는데 배터리는 그 사이에도 준다
+- **즉시 끄지 않는다.** `shutdown /s /t <유예>` (`OCR_WORKER_BATTERY_GRACE_SEC`, 기본 120초)로 예약해 진행 중인 job이 결과를 올릴 시간을 주고, 그 사이 `shutdown /a`로 취소할 수 있다
+- **한 번 예약하면 다시 걸지 않는다.** 유예 동안 재예약하면 사용자가 `shutdown /a`로 취소해도 다음 확인에서 되살아난다. 단 예약 명령 자체가 실패하면 플래그를 되돌려 재시도한다
+- 배터리를 **못 읽으면 끄지 않는다**. Windows가 아니거나(`process.platform !== 'win32'`), 배터리가 없는 데스크톱이거나, 조회가 실패하면 전부 "판단 보류"로 넘어간다
+- 조회는 `WMIC`이 아니라 PowerShell CIM(`Get-CimInstance Win32_Battery`)으로 한다 - WMIC은 폐기 예정이고 최신 Windows 빌드에는 없다
 
 `isAllowedImageUrl()` / `ALLOWED_IMAGE_HOSTS` - **받아올 수 있는 출처를 `https://pbs.twimg.com`으로
 제한한다.** 이 워커는 NAT 안쪽에 있으면서 job이 시키는 대로 URL을 받아오므로, job을 넣을 수 있는
