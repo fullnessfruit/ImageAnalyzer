@@ -74,21 +74,38 @@
 **단, 표현 불가능한 모델은 돌리지 않는다.** `toClassIdSets()`가 null이면 그 모델의 점수는
 반드시 0이라 인식을 돌려도 결과가 정해져 있다. 인식이 전체 시간의 80~90%이므로 확정된 0을
 위해 그 비용을 치를 이유가 없다.
-- `ocr-dict-ch` (18,383자): 한자 15,565 + 가나 180 + 라틴 52 + 숫자
-- `ocr-dict-ko` (11,945자): 한글 11,172 + 라틴 52 + 숫자. **한자 0자, 가나 0자**
+| 사전 | 문자수 | 구성 | 학습 언어 |
+|---|---|---|---|
+| `ocr-dict-ch` | 18,383 | 한자 15,565 + 가나 180 + 라틴 52 + 숫자 | 중국어 |
+| `ocr-dict-ja` | 4,399 | 한자 3,955 + 가나 167 + 라틴 + 숫자 | 일본어 |
+| `ocr-dict-ko` | 11,945 | 한글 11,172 + 라틴 52 + 숫자. **한자 0자, 가나 0자** | 한국어 |
 
-두 사전이 겹치지 않아 `大西亜玖璃`는 `ko`에서 한 글자도 표현되지 않는다. 그래서 한자·가나
-검색어에는 `ch`만 돌아가고, 한글 검색어에는 `ko`만 돌아간다. 결과적으로 비용은 예전 라우팅과
-같으면서 휴리스틱은 사라졌다. 라틴 문자처럼 양쪽 사전에 다 있는 검색어는 두 모델이 모두 돌고
-최대값을 취한다.
+`ko`는 한자·가나가 0자라 `大西亜玖璃`를 한 글자도 표현하지 못한다. 그래서 한자·가나 검색어는
+`ch`와 `ja`가 돌고 `ko`는 건너뛴다. 한글 검색어는 `ko`만 돈다. 라틴 문자처럼 세 사전에 다 있는
+검색어는 셋 다 돌고 최대값을 취한다.
 
-PP-OCRv4 **모바일** rec은 사전에 가나가 5자뿐이고 `ヶ`·`咲`조차 없어 일본어에 쓸 수 없다.
+**일본어 모델을 별도로 두는 이유.** `ch` 사전이 가나와 한자를 덮으므로 표현은 가능하지만,
+학습 언어가 중국어라 일본어 표기를 간체자로 끌어당긴다. 실측으로 확인된 개선:
 
-**현재 일본어 전용 모델이 없다.** `monkt/paddleocr-onnx`에 `japan`이 없어 일본어를 `ch`(중국어
-모델)로 읽고 있다. 위의 간체자 오독이 그 결과다. `cycloneboy/japan_PP-OCRv4_rec_infer`
-(model.onnx 9.7MB + japan_dict.txt 4,399자, `大西亜玖璃` 전 문자 포함)가 같은 CTC/CRNN 구조라
-그대로 추가 가능하다. 추가하면 한자 검색어는 `ch`와 `ja`가 모두 돌아 최대값을 취하게 되고,
-인식 시간은 그만큼 늘어난다.
+| 이미지 | 검색어 | `ch`만 | `ch`+`ja` |
+|---|---|---|---|
+| `1500x500.jpg` | `大西亜玖璃` | 0.876 | **0.998** |
+| `HDMjR99aQAAsZFt.jpg` | `大西亜玖璃` | 0.947 | 0.947 |
+
+비용은 정상 상태에서 인식 시간 **+5~10%**다(4,933→5,299ms, 3,525→3,630ms). 모델 수만큼
+배가 되지 않는 이유는 `ja`가 9.7MB·출력 클래스 4,401개로 `ch`(80.6MB·18,385개)보다 훨씬
+가볍기 때문이다. 첫 실행에서 70~100초가 찍히는 경우가 있는데 페이지인 효과이며 재실행하면
+사라진다.
+
+`ja` 모델은 `monkt/paddleocr-onnx`에 `japan`이 없어 `cycloneboy/japan_PP-OCRv4_rec_infer`에서
+받는다. 출력이 `[N,T,4401]`(사전 + 공백 + blank)로 `ch`와 구조가 같고 softmax도 이미 적용돼
+있어 `recognizeBatch()`가 그대로 처리한다.
+
+PP-OCRv4 **모바일** ch rec은 사전에 가나가 5자뿐이고 `ヶ`·`咲`조차 없어 일본어에 쓸 수 없다.
+
+**모델을 늘려도 못 읽는 것은 못 읽는다.** 광학적으로 정보가 부족한 케이스는 그대로다.
+`HFEGXs8bAAA2F4g.jpg`의 배경 명찰(세로쓰기, 글자당 약 24px, 초점 이탈)은 영역을 격리하고
+8배까지 확대해도 5글자 중 2글자만 맞아 최선이 1.5e-2였고, `ja` 추가 후에도 0.001로 변화가 없다.
 
 ### 임계값은 모델마다 비교 불가능한 스케일 위에 있다
 ArcFace 코사인과 CCIP 코사인과 태그 벡터 코사인은 서로 다른 분포다. 비슷한 숫자를 나란히
@@ -197,12 +214,13 @@ ArcFace / CCIP / 태그 벡터는 차원도 기하도 다르다. 섞어서 코�
 
 **이 머신에는 `server-ocr.bat` 하나만 띄우면 된다.** 예전의 `server-ocr.bat`(HTTP 분석 서버 OCR 모드)은 부르는 데가 없어져서 삭제하고, 워커 스크립트가 그 이름을 물려받았다 - 익숙한 이름 하나로 합친 것이다. `npm run server:ocr`은 README의 수동 curl API용으로 남아 있으나 전용 런처는 없다. 워커는 그 서버와 통신하지 않는다: `performOCR`을 같은 프로세스에서 직접 부르고 밖으로는 브로커하고만 말한다. 크롬 확장 쪽도 HTTP 분석 서버를 호출하지 않는다 (`ocr-text-protocol.js`에 남은 것은 `blocksToTsv` / `splitFoundLines` / `matchedKeyword` 세 개의 순수 헬퍼뿐이며, 이름도 그래서 바뀌었다).
 
-**OCR 전용 기동**: `--ocr-only` 인자 또는 `IMAGEANALYZER_OCR_ONLY=1`. 비전 모델 6개(face-det 17MB, arcface 167MB, anime-face-det 43MB, anime-person-det 43MB, ccip 144MB, wd-tagger 362MB = 약 772MB)를 **다운로드도 로드도 하지 않는다.** OCR 모델 3개(det 4.6MB + rec-ch 81MB + rec-ko 13MB)만 쓰므로 메모리가 작은 호스트에서 돌릴 수 있다. 탐지 함수들이 세션 null을 빈 배열로 처리하도록 되어 있어 `analyzeImage`는 그대로 통과하고 `faces`/`facesWeak`/`characters`/`costumes`만 빈 배열이 된다. `GET /health`가 `ocrOnly`로 모드를 보고하고, `npm run server:ocr`로 기동한다 (전용 .bat 없음 - 그 이름은 이제 워커 런처다).
+**OCR 전용 기동**: `--ocr-only` 인자 또는 `IMAGEANALYZER_OCR_ONLY=1`. 비전 모델 6개(face-det 17MB, arcface 167MB, anime-face-det 43MB, anime-person-det 43MB, ccip 144MB, wd-tagger 362MB = 약 772MB)를 **다운로드도 로드도 하지 않는다.** OCR 모델 4개(det 4.6MB + rec-ch 81MB + rec-ko 13MB + rec-ja 9.7MB)만 쓰므로 메모리가 작은 호스트에서 돌릴 수 있다. 탐지 함수들이 세션 null을 빈 배열로 처리하도록 되어 있어 `analyzeImage`는 그대로 통과하고 `faces`/`facesWeak`/`characters`/`costumes`만 빈 배열이 된다. `GET /health`가 `ocrOnly`로 모드를 보고하고, `npm run server:ocr`로 기동한다 (전용 .bat 없음 - 그 이름은 이제 워커 런처다).
 
 ### 성능 특성
 i5-3550(AVX2 없음) 기준 이미지당 9~30초. **인식(rec)이 전체의 80~90%**를 차지한다.
-다국어 rec 모델이 84MB·출력 클래스 18,385개라 스트립당 0.8~1.3초가 든다. 텍스트가 많은
-이미지일수록 느리다. 완화책으로 줄 병합, 최소 스트립 폭 필터, 스케일 중복 제거, 배치 추론,
+`ch` rec이 81MB·출력 클래스 18,385개라 스트립당 0.8~1.3초가 든다. 텍스트가 많은 이미지일수록
+느리다. 한자·가나 검색어는 `ja`도 함께 도는데 그 모델은 9.7MB·4,401클래스로 가벼워 추가 비용이
+**+5~10%**에 그친다. 완화책으로 줄 병합, 최소 스트립 폭 필터, 스케일 중복 제거, 배치 추론,
 영역 수 상한(`MAX_REGIONS`)을 둔다. 더 줄이려면 rec 모델 INT8 양자화가 남은 수단이다.
 
 ---
@@ -347,8 +365,9 @@ Windows에서 열린 핸들에 unlink를 시도하면 EPERM이 난다. `.part`�
 | 파일 | 모델 | 용도 |
 |---|---|---|
 | `ocr-det.onnx` | PP-OCRv4 DBNet | 텍스트 영역 검출 |
-| `ocr-rec-ch.onnx` + 사전 | PaddleOCR 다국어 CRNN | 일본어·중국어·영어 인식 |
-| `ocr-rec-ko.onnx` + 사전 | PaddleOCR 한국어 CRNN | 한국어 인식 |
+| `ocr-rec-ch.onnx` + 사전 | PaddleOCR CJK+라틴 CRNN (중국어 학습) | 한자·가나·라틴 인식 |
+| `ocr-rec-ja.onnx` + 사전 | PaddleOCR japan PP-OCRv4 CRNN | 한자·가나 인식 (일본어 학습) |
+| `ocr-rec-ko.onnx` + 사전 | PaddleOCR 한국어 CRNN | 한글 인식 |
 | `face-det.onnx` | InsightFace SCRFD det_10g | 실사 얼굴 검출 + 5점 랜드마크 |
 | `arcface-w600k-r50.onnx` | InsightFace ArcFace | 얼굴 임베딩 |
 | `anime-face-det.onnx` | deepghs YOLOv8s | 애니 얼굴 검출 |

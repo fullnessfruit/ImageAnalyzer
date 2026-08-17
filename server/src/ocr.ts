@@ -42,12 +42,13 @@ const recModels = new Map<RecLang, RecModel>();
  * "ko"(11,945자)에는 한자와 가나가 아예 없어 한글이 섞인 검색어만 이쪽이 필요하다.
  * 자종별 내역은 Document.md "검색어를 표현할 수 있는 모델은 전부 채점한다" 참조.
  */
-export type RecLang = "ch" | "ko";
+export type RecLang = "ch" | "ko" | "ja";
 
 /** 로그용 사전 커버리지 설명. 모델을 추가하면 여기에도 한 줄 넣는다. */
 const REC_COVERAGE: Record<RecLang, string> = {
   ch: "kanji/kana/latin/digits (zh-trained)",
   ko: "hangul/latin/digits",
+  ja: "kanji/kana/latin/digits (ja-trained)",
 };
 
 export function isOcrReady(): boolean {
@@ -65,6 +66,7 @@ export async function initOCR(modelsDir: string): Promise<void> {
   for (const [lang, model, dict] of [
     ["ch", "ocr-rec-ch", "ocr-dict-ch"],
     ["ko", "ocr-rec-ko", "ocr-dict-ko"],
+    ["ja", "ocr-rec-ja", "ocr-dict-ja"],
   ] as const) {
     const recPath = getModelPath(modelsDir, model);
     const dictPath = getModelPath(modelsDir, dict);

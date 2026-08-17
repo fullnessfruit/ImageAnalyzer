@@ -7,7 +7,7 @@ full-body ReID are explicitly out of scope.
 
 ## Tech Stack
 - **Server**: Node.js + TypeScript (Express, onnxruntime-node, sharp, better-sqlite3). No Python.
-- **OCR**: PaddleOCR DBNet detection + multilingual CRNN recognition, ONNX
+- **OCR**: PaddleOCR DBNet detection + per-language CRNN recognition (`ch` / `ja` / `ko`), ONNX
 - **Vision**: InsightFace SCRFD + ArcFace (real faces), deepghs YOLOv8 detectors + CCIP (anime),
   SmilingWolf WD-Tagger v3 (character names + clothing tags)
 
