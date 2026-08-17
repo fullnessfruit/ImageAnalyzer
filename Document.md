@@ -33,8 +33,10 @@
 ## 프로젝트 개요
 
 이미지를 입력받아 네 가지를 판정하는 로컬 API 서버. 크롬 확장 프로그램에서 `POST /analyze`로 호출.
+호출자가 NAT 너머에 있어 직접 부를 수 없을 때는 **워커 모드**(`npm run worker`)로 브로커를
+당겨 같은 판정을 수행한다.
 
-1. **OCR** - `searchStrings.tsv`의 리스트 중 **하나라도** 이미지에 있는가
+1. **OCR** - 요청이 준 검색 리스트 중 **하나라도** 이미지에 있는가 (미전달 시 `searchStrings.tsv`)
 2. **실사 인물** - 등록된 인물의 얼굴이 있는가
 3. **캐릭터** - 애니 캐릭터가 누구인가
 4. **캐릭터 의상** - 등록된 의상을 입고 있는가
@@ -187,7 +189,15 @@ ArcFace / CCIP / 태그 벡터는 차원도 기하도 다르다. 섞어서 코�
 → JSON
 ```
 
-`config.json`과 `searchStrings.tsv`는 요청마다 다시 읽어 재시작 없이 반영된다.
+`config.json`은 요청마다 다시 읽어 재시작 없이 반영된다.
+
+**검색 리스트는 요청이 정본이다.** `POST /analyze`의 multipart 필드 `searchStrings`(TSV 텍스트)로 받고, 그 필드가 없을 때만 `searchStrings.tsv`로 물러선다. 호출자(크롬 확장)의 키워드는 수시로 바뀌는데 서버가 자기 파일만 본다면 "목록에 없어서 못 찾음"과 "목록에 있는데 못 읽음"이 구분되지 않아, 호출자 입장에서 결과를 해석할 수 없다. 응답 로그의 `listSource`가 어느 쪽을 썼는지 알려준다.
+
+**워커 모드 (`npm run worker` / `server-ocr.bat`)**: HTTP 서버 대신 브로커를 당겨 일한다. 호출자인 크롬 확장은 공인 주소를 가진 매우 사양이 낮은 머신에서 돌고 이 프로그램은 집 노트북(NAT 안)에서 도는데, 확장이 노트북을 호출할 수 없으므로 방향을 뒤집은 것이다. 서버 모드는 그대로 남아 있고 같은 기계에서 부를 수 있을 때 쓴다. 상세는 `server/src/worker.ts`.
+
+**이 머신에는 `server-ocr.bat` 하나만 띄우면 된다.** 예전의 `server-ocr.bat`(HTTP 분석 서버 OCR 모드)은 부르는 데가 없어져서 삭제하고, 워커 스크립트가 그 이름을 물려받았다 - 익숙한 이름 하나로 합친 것이다. `npm run server:ocr`은 README의 수동 curl API용으로 남아 있으나 전용 런처는 없다. 워커는 그 서버와 통신하지 않는다: `performOCR`을 같은 프로세스에서 직접 부르고 밖으로는 브로커하고만 말한다. 크롬 확장 쪽도 HTTP 분석 서버를 호출하지 않는다 (`ocr-text-protocol.js`에 남은 것은 `blocksToTsv` / `splitFoundLines` / `matchedKeyword` 세 개의 순수 헬퍼뿐이며, 이름도 그래서 바뀌었다).
+
+**OCR 전용 기동**: `--ocr-only` 인자 또는 `IMAGEANALYZER_OCR_ONLY=1`. 비전 모델 6개(face-det 17MB, arcface 167MB, anime-face-det 43MB, anime-person-det 43MB, ccip 144MB, wd-tagger 362MB = 약 772MB)를 **다운로드도 로드도 하지 않는다.** OCR 모델 3개(det 4.6MB + rec-ch 81MB + rec-ko 13MB)만 쓰므로 메모리가 작은 호스트에서 돌릴 수 있다. 탐지 함수들이 세션 null을 빈 배열로 처리하도록 되어 있어 `analyzeImage`는 그대로 통과하고 `faces`/`facesWeak`/`characters`/`costumes`만 빈 배열이 된다. `GET /health`가 `ocrOnly`로 모드를 보고하고, `npm run server:ocr`로 기동한다 (전용 .bat 없음 - 그 이름은 이제 워커 런처다).
 
 ### 성능 특성
 i5-3550(AVX2 없음) 기준 이미지당 9~30초. **인식(rec)이 전체의 80~90%**를 차지한다.
@@ -213,9 +223,10 @@ i5-3550(AVX2 없음) 기준 이미지당 9~30초. **인식(rec)이 전체의 80~
 `characterAliases`는 WD-Tagger의 danbooru 로마자 태그를 갤러리 이름 표기(보통 일본어)로
 통일한다. 파일이 없거나 깨져도 기본값으로 동작한다.
 
-### searchStrings.tsv
-한 줄 = 하나의 리스트. 줄 안의 탭 구분 파트는 **모두** 존재해야 하고(AND), 줄끼리는 OR라
-**한 리스트라도** 일치하면 성공.
+### 검색 리스트 (TSV 형식)
+요청의 `searchStrings` 필드나 `searchStrings.tsv` 파일 모두 같은 형식이다. 한 줄 = 하나의
+리스트. 줄 안의 탭 구분 파트는 **모두** 존재해야 하고(AND), 줄끼리는 OR라 **한 리스트라도**
+일치하면 성공. 파일은 요청이 목록을 주지 않는 수동 실행·CLI용 예비 경로다.
 
 ```
 大西亜玖璃
@@ -345,9 +356,94 @@ Windows에서 열린 핸들에 unlink를 시도하면 EPERM이 난다. `.part`�
 | `ccip-feat.onnx` | deepghs CCIP caformer | 캐릭터 신원 임베딩 |
 | `wd-tagger.onnx` + `wd-tags.csv` | SmilingWolf wd-vit-tagger-v3 | 캐릭터 이름 + 의류 태그 |
 
+### server/src/config.ts
+**역할**: `config.json` 로더. 서버·CLI·워커 세 곳이 같은 파일을 같은 규칙으로 읽어야 하므로
+한 곳에 둔다. 예전엔 `index.ts`와 `scripts/analyze.ts`에 같은 함수가 복사돼 있었고, 그러면
+기본값 병합 규칙이 조용히 갈라진다. 파일이 없거나 깨져도 기본값으로 동작하며, 매 호출마다
+다시 읽으므로 재시작 없이 반영된다. `PROJECT_ROOT`도 여기서 내보낸다.
+
 ### server/src/index.ts
 **역할**: HTTP 계층. `POST /analyze`(multipart `image`), `GET /health`(모델·갤러리 상태).
-모든 Origin CORS 허용(크롬 확장용). `loadConfig()`는 파일이 없거나 깨져도 기본값으로 동작한다.
+모든 Origin CORS 허용(크롬 확장용). 설정은 `config.ts`의 `loadConfig()`를 요청마다 호출한다.
+
+### server/src/worker.ts
+**역할**: 브로커 폴링 워커. NAT 안쪽에서 도는 실행 모드이며 HTTP 서버를 열지 않는다.
+
+**왜 방향이 반대인가**: 크롬 확장은 매우 사양이 낮은 머신에서 돌고 이 프로그램은 집 노트북에 있다.
+NAT가 막는 건 *확장 → 노트북* 한 방향이라, 노트북이 브로커
+(`AnnouncementAggregator/ocr-broker`)를 당겨 작업을 가져가고 결과를 올린다.
+
+**OCR만 쓴다.** 확장이 묻는 것이 "이 이미지에 이 문자열들이 있는가" 하나뿐이라 `performOCR`을
+직접 부른다. 비전 모델 6개(약 772MB)는 받지도 로드하지도 않고 **DB도 열지 않는다** - OCR
+경로는 갤러리를 전혀 참조하지 않기 때문이다(`ocr.ts`는 `db`를 import하지 않는다).
+
+**이미지는 워커가 직접 받는다.** job에는 URL만 실려 온다. pbs.twimg.com은 공개라 노트북이 자기
+회선으로 받으면 되고, 그래야 확장 쪽 머신의 업로드 대역폭과 브로커 용량을 둘 다 쓰지 않는다.
+
+**검색 리스트는 job이 들고 온 것이 정본이다.** 서버 모드의 multipart `searchStrings`와 같은
+이유 - 워커가 자기 `searchStrings.tsv`를 보면 "목록에 없어서 못 찾음"과 "있는데 못 읽음"이
+구분되지 않아 확장의 미스 보고가 무의미해진다.
+
+`verifyBroker()` - 기동 시 상대가 정말 브로커인지(`GET /health`의 `service === 'ocr-broker'`) 확인한다.
+포트를 쥐고 있는 것과 브로커인 것은 다르고, 다른 프로그램이 그 포트를 잡고 있으면 claim이 매번
+빈 응답처럼 보여 "할 일이 없다"와 구분되지 않아 워커가 영원히 조용히 논다. **모델 로드 전에**
+부른다 - 주소가 틀렸으면 ONNX를 올릴 이유가 없다. 두 실패를 구분한다:
+- *닿지 않음* → 경고만 하고 계속 폴링. 브로커가 아직 안 떴거나 방화벽이 막고 있을 수 있다
+- *닿았는데 브로커가 아님* → 설정이 틀린 것이고 폴링해도 낫지 않으므로 즉시 종료(exit 1)
+
+**루프**
+- 한 번에 job 하나만 claim한다. 여러 개를 잡아 두면 앞의 것을 처리하는 동안 뒤의 것 lease가
+  만료되어, 아무도 손대지 않은 job을 잡고 있는 척하는 구간이 생긴다
+- 한 job을 끝내면 **다음 폴링을 기다리지 않고 이어서** 다음 job을 claim한다. 노트북이 오래
+  꺼져 있다가 켜졌을 때 1분에 하나씩 처리하면 하루치를 따라잡지 못한다
+- `setInterval`이 아니라 한 틱이 끝난 뒤 간격을 잰다. OCR이 장당 수십 초라 틱이 겹칠 수 있다
+- 큐가 빈 것은 정상이므로 아무것도 찍지 않는다
+
+**실패 처리**
+- OCR 자체가 터지면 결과를 올리지 않고 `POST /jobs/<id>/release`로 lease만 놓는다 → 다음
+  폴링에서 다시 잡힌다. 결과가 올라와야만 브로커가 job을 지우므로 유실되지 않는다
+- 이미지를 **한 장도** 못 받으면 `error`를 실어 결과를 올리고 끝낸다. 재시도해도 같은 결과라
+  job을 붙잡아 둘 이유가 없다. 일부만 받았으면 받은 만큼의 판정이 유효하므로 정상 결과로 올린다
+- 결과 업로드가 실패하면 job은 브로커에 그대로 남는다. 재시도가 곧 그 job의 재실행이다
+
+**저배터리 자동 종료 (`checkBatteryAndMaybeShutdown`)**
+
+무인으로 돌면서 OCR로 CPU를 태우는 프로세스라, 방전으로 그냥 꺼지는 것보다 통제된 종료가 낫다. 절전 기능이 아니라 데이터 보호 장치다.
+
+- `OCR_WORKER_BATTERY_SHUTDOWN_PERCENT` - **코드 기본값은 0(꺼짐)**, `server-ocr.bat`이 25로 켠다. 라이브러리 기본값은 안전한 쪽, 켜는 것은 런처의 책임
+- **방전 중일 때만 발동한다.** `Win32_Battery.BatteryStatus === 1`(Discharging)만 방전으로 보고, 3(Fully Charged)·4(Low) 같은 애매한 값은 세지 않는다 - 애매할 때 PC를 끄는 것보다 안 끄는 쪽이 안전하다. AC에 꽂혀 있으면 몇 퍼센트든 안 끈다
+- **폴링 틱과 별개의 `setInterval`로 돈다** (`OCR_WORKER_BATTERY_CHECK_MS`, 기본 60초). 틱 경계에서만 보면 job이 밀렸을 때 그 배수만큼 못 보는데 배터리는 그 사이에도 준다
+- **즉시 끄지 않는다.** `shutdown /s /t <유예>` (`OCR_WORKER_BATTERY_GRACE_SEC`, 기본 120초)로 예약해 진행 중인 job이 결과를 올릴 시간을 주고, 그 사이 `shutdown /a`로 취소할 수 있다
+- **한 번 예약하면 다시 걸지 않는다.** 유예 동안 재예약하면 사용자가 `shutdown /a`로 취소해도 다음 확인에서 되살아난다. 단 예약 명령 자체가 실패하면 플래그를 되돌려 재시도한다
+- 배터리를 **못 읽으면 끄지 않는다**. Windows가 아니거나(`process.platform !== 'win32'`), 배터리가 없는 데스크톱이거나, 조회가 실패하면 전부 "판단 보류"로 넘어간다
+- 조회는 `WMIC`이 아니라 PowerShell CIM(`Get-CimInstance Win32_Battery`)으로 한다 - WMIC은 폐기 예정이고 최신 Windows 빌드에는 없다
+
+`isAllowedImageUrl()` / `ALLOWED_IMAGE_HOSTS` - **받아올 수 있는 출처를 `https://pbs.twimg.com`으로
+제한한다.** 이 워커는 NAT 안쪽에 있으면서 job이 시키는 대로 URL을 받아오므로, job을 넣을 수 있는
+쪽은 **집 네트워크 안의 기계로 임의 주소를 fetch시킬 수 있다**(SSRF). 브로커가 뚫리거나 잘못
+노출되거나 버그로 이상한 job이 들어와도 그 지렛대를 주지 않도록 **워커 자신이** 막는다 - 전송
+방식과 무관하게 유효한 방어여야 하기 때문이다. 확장이 보내는 이미지는 HTML
+정규식 경로든 API `media_url_https` 경로든 항상 pbs.twimg.com이라 잃는 것이 없다. 거부는 정상
+job에 나올 수 없으므로 경고로 남긴다.
+
+`fetchImage()` - **1회 재시도한다.** 장당 OCR이 수십 초라 이미지 사이 간격이 그만큼 벌어지고,
+그 사이 서버가 유휴 keep-alive 연결을 닫으면 다음 요청이 죽은 소켓에 실려 즉사한다(실측:
+12초 간격의 두 번째 이미지가 그렇게 실패했다). 재연결 한 번이면 끝나는 문제다. 두 번 다
+실패하면 그 이미지만 버린다 - 한 장 때문에 포스트 전체의 OCR을 잃지 않는다.
+
+**요청·응답 서명 (스킴 OCR1)**: 브로커와 주고받는 모든 호출에 서명이 붙는다. 공유 비밀
+(`OCR_BROKER_SECRET`) 자체는 회선을 지나지 않고 요청에 대한 HMAC-SHA256 서명만 나가므로, 정적
+토큰과 달리 경로 위의 관찰자가 주워 재사용할 것이 없다. 응답에 붙는 `X-Ocr-Signature`는 **그
+요청의 nonce에 묶여** 있어서, 포트만 차지한 프로그램(`/health` handshake를 위조한 경우 포함)을
+첫 실호출에서 걸러낸다. 형식은 브로커·확장과 동일하며 `brokerFetch` 위 주석에 명시돼 있다 -
+리포가 다른 별개 배포물이라 코드로 공유할 수 없으니 어긋나면 안 된다. **양쪽 시계가 NTP로
+맞아야 한다**(±2분).
+
+**Env**: `OCR_BROKER_URL`(기본 `http://localhost:3100`), `OCR_BROKER_SECRET`(**필수**),
+`OCR_WORKER_INTERVAL_MS`(60000), `OCR_WORKER_ID`.
+
+브로커는 모든 인터페이스에서 듣고 접속 제한은 방화벽(네트워크 방화벽 + 호스트 방화벽)이 이
+노트북의 출발지 IP로 건다. 따라서 `OCR_BROKER_URL`은 `http://<브로커 머신 주소>:3100`이 된다.
 
 ### scripts/register.ts
 **역할**: 갤러리 등록 공통 드라이버. `npx ts-node scripts/register.ts [face|character|costume|all]`
@@ -361,6 +457,7 @@ Windows에서 열린 핸들에 unlink를 시도하면 EPERM이 난다. `.part`�
 
 ### scripts/analyze.ts
 **역할**: 서버 없이 로컬 이미지/폴더 분석. 임계값 조정과 회귀 확인용.
+설정은 서버·워커와 같은 `server/src/config.ts`의 `loadConfig()`를 쓴다.
 
 ### scripts/tags.ts
 **역할**: WD-Tagger 원시 확률 덤프(rating/character/general 상위 20). 캐릭터 임계값 조정,

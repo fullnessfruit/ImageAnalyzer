@@ -34,9 +34,21 @@ const recModels = new Map<RecLang, RecModel>();
 
 /**
  * 검색어를 표현할 수 있는 모델은 전부 채점에 쓴다. 표기로 모델을 고르지 않는다.
- * 모델 추가는 여기와 initOCR의 로딩 목록에만 손대면 되고 채점 경로는 그대로다.
+ *
+ * 이름이 오해를 부르지만 **"ch"는 중국어 전용이 아니라 CJK+라틴 통합 사전**이다.
+ * 18,383자에 한자·히라가나·가타카나·라틴·숫자가 모두 들어 있다.
+ * 다만 **사전이 덮는 것과 모델이 잘 읽는 것은 다르다** - 학습 언어는 중국어라
+ * 일본어 표기를 간체자로 끌어당긴다(亜→亚). 그래서 표현 가능한 모델을 전부 돌린다.
+ * "ko"(11,945자)에는 한자와 가나가 아예 없어 한글이 섞인 검색어만 이쪽이 필요하다.
+ * 자종별 내역은 Document.md "검색어를 표현할 수 있는 모델은 전부 채점한다" 참조.
  */
 export type RecLang = "ch" | "ko";
+
+/** 로그용 사전 커버리지 설명. 모델을 추가하면 여기에도 한 줄 넣는다. */
+const REC_COVERAGE: Record<RecLang, string> = {
+  ch: "kanji/kana/latin/digits (zh-trained)",
+  ko: "hangul/latin/digits",
+};
 
 export function isOcrReady(): boolean {
   return detSession !== null && recModels.size > 0;
@@ -75,10 +87,11 @@ export async function initOCR(modelsDir: string): Promise<void> {
     for (let i = 0; i < chars.length; i++) if (!charIndex.has(chars[i])) charIndex.set(chars[i], i + 1);
 
     recModels.set(lang, { session, charIndex });
-    console.log(`OCR rec loaded - lang: ${lang}, classes: ${chars.length + 1}`);
+    // "lang: ch"가 "중국어 전용"으로 읽히지만 아니다 - RecLang 주석 참조.
+    console.log(`OCR rec loaded - lang: ${lang}, covers: ${REC_COVERAGE[lang]}, classes: ${chars.length + 1}`);
   }
 
-  console.log(`OCR ready - det: yes, rec: ${[...recModels.keys()].join(",")}`);
+  console.log(`OCR ready - det: yes, rec: ${[...recModels.keys()].map((l) => `${l}(${REC_COVERAGE[l]})`).join(", ")}`);
 }
 
 // ============================================================
@@ -110,7 +123,7 @@ const CONFUSION_GROUPS = [
   "ロ口0Oo〇",
   "エ工ェ",
   "二ニ",
-  "一ー－‐–—ｰ",
+  "一ー－‐–-ｰ",
   "卜ト",
   "タ夕",
   "ハ八",

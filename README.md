@@ -73,9 +73,45 @@ npm run server
 
 Models (~890 MB) download automatically on first run.
 
+### OCR only
+
+```bash
+npm run server:ocr
+```
+
+Runs the server with the vision models (face / arcface / anime detectors / ccip / wd-tagger,
+~772 MB) neither downloaded nor loaded - only the OCR models (~99 MB) are used. `faces`,
+`facesWeak`, `characters` and `costumes` always come back empty; `ocr` is unaffected. Use it
+when the caller only asks "does this image contain one of these strings?" or when the host is
+too small for the full model set. `IMAGEANALYZER_OCR_ONLY=1` does the same, and `GET /health`
+reports `ocrOnly`.
+
+### OCR worker (broker queue)
+
+```bash
+npm run worker          # or server-ocr.bat on Windows
+```
+
+Instead of serving HTTP, this polls a broker for jobs, runs OCR, and posts results back. It
+exists because the caller (a Chrome extension on a public host) cannot reach this machine -
+it sits behind NAT - so the direction is reversed and this side does the pulling. OCR only,
+same as above, and it never opens the gallery DB.
+
+It calls out to `OCR_BROKER_URL` and signs every request with `OCR_BROKER_SECRET`, so unlike
+the server mode there is nothing to bind and no port to open here. `server-ocr.bat` also arms
+the low-battery shutdown (25% while discharging) - see the comments in that file.
+
 ### API
 
 ```bash
+# The caller owns the search list: send it with the image (TSV text, one list per line,
+# tab-separated parts that must ALL appear). searchStrings.tsv is only the fallback for
+# manual runs.
+curl -X POST http://localhost:3000/analyze \
+  -F "image=@test.jpg" \
+  -F $'searchStrings=search-string-a\nfirst-part\tsecond-part'
+
+# Without the field, the server falls back to searchStrings.tsv
 curl -X POST http://localhost:3000/analyze -F "image=@test.jpg"
 ```
 

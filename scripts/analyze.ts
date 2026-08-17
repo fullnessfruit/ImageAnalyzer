@@ -12,27 +12,11 @@ import { initDB } from "../server/src/db";
 import { ensureModelsDownloaded } from "../server/src/model-downloader";
 import { initOCR, parseSearchLists } from "../server/src/ocr";
 import { loadModels } from "../server/src/inference";
-import { analyzeImage, DEFAULT_CONFIG, Config } from "../server/src/analyze";
+import { analyzeImage } from "../server/src/analyze";
+import { loadConfig } from "../server/src/config";
 
 const PROJECT_ROOT = path.resolve(__dirname, "..");
 const SUPPORTED_EXT = new Set([".jpg", ".jpeg", ".png", ".bmp", ".webp"]);
-
-function loadConfig(): Config {
-  const p = path.join(PROJECT_ROOT, "config.json");
-  try {
-    const raw = JSON.parse(fs.readFileSync(p, "utf-8"));
-    return {
-      similarityThreshold: { ...DEFAULT_CONFIG.similarityThreshold, ...(raw.similarityThreshold ?? {}) },
-      margin: { ...DEFAULT_CONFIG.margin, ...(raw.margin ?? {}) },
-      ocr: { ...DEFAULT_CONFIG.ocr, ...(raw.ocr ?? {}) },
-      wdTagger: { ...DEFAULT_CONFIG.wdTagger, ...(raw.wdTagger ?? {}) },
-      characterAliases: { ...DEFAULT_CONFIG.characterAliases, ...(raw.characterAliases ?? {}) },
-      candidates: { ...DEFAULT_CONFIG.candidates, ...(raw.candidates ?? {}) },
-    };
-  } catch {
-    return DEFAULT_CONFIG;
-  }
-}
 
 async function main() {
   const target = process.argv[2];
