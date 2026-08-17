@@ -31,8 +31,10 @@ takes `--promote <kind> <name>` and `--clear [kind] [name]`, where kind is `face
 - **OCR is keyword spotting, not reading.** Search strings are scored directly against the CTC
   probability lattice; there is no full-text assembly and no substring comparison. Per-position
   alternative character sets absorb kana/width/case variation and OCR confusions.
-- The search string's script picks the recognition model - the `ch` dictionary covers kanji/kana/latin,
-  the `ko` dictionary covers hangul only. No language detection on the image.
+- **Every model that can represent the search string is scored; the max wins.** Script does not pick
+  the model, because han characters are shared and dictionary coverage is not the same thing as
+  training language. Models whose dictionary cannot represent the string are skipped, since their
+  score is provably zero and recognition dominates runtime. No language detection on the image.
 - **CLIP is not used.** Its space clusters by art style, not identity.
 - Real faces require 5-point landmark alignment before ArcFace; unaligned crops are out of distribution.
 - **Faces are reported in two bands.** `faces` clears the `face` threshold and is treated as a live

@@ -84,8 +84,7 @@ curl -X POST http://localhost:3000/analyze -F "image=@test.jpg"
   "ocr": {
     "found": ["search-string-a"],
     "detail": [{ "list": "search-string-a", "matched": true, "parts": [{ "text": "search-string-a", "score": 0.834 }] }],
-    "regions": 19,
-    "fullText": "debug greedy decode, not used for matching"
+    "regions": 19
   },
   "faces":      [{ "name": "person-a", "score": 0.7854, "margin": 0.7854, "box": [x, y, w, h] }],
   "facesWeak":  [{ "name": "person-a", "score": 0.3221, "margin": 0.3221, "box": [x, y, w, h] }],
