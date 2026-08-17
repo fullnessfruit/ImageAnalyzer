@@ -27,22 +27,29 @@ let detSession: ort.InferenceSession | null = null;
 
 interface RecModel {
   session: ort.InferenceSession;
-  /** class i(>0) → chars[i-1]. class 0은 blank. */
-  chars: string[];
-  /** 문자 → class 인덱스(1-based). */
+  /** 문자 → class 인덱스(1-based). class 0은 blank. */
   charIndex: Map<string, number>;
 }
 const recModels = new Map<RecLang, RecModel>();
 
 /**
+ * 검색어를 표현할 수 있는 모델은 전부 채점에 쓴다. 표기로 모델을 고르지 않는다.
+ *
  * 이름이 오해를 부르지만 **"ch"는 중국어 전용이 아니라 CJK+라틴 통합 사전**이다.
- * 18,383자에 한자·히라가나·가타카나·라틴·숫자가 모두 들어 있어
- * **일본어와 영어를 이 모델이 처리한다** - 별도 japan/en 모델을 두지 않는 이유다.
+ * 18,383자에 한자·히라가나·가타카나·라틴·숫자가 모두 들어 있다.
+ * 다만 **사전이 덮는 것과 모델이 잘 읽는 것은 다르다** - 학습 언어는 중국어라
+ * 일본어 표기를 간체자로 끌어당긴다(亜→亚). 그래서 표현 가능한 모델을 전부 돌린다.
  * "ko"(11,945자)에는 한자와 가나가 아예 없어 한글이 섞인 검색어만 이쪽이 필요하다.
- * 두 사전이 겹치지 않으므로 검색어의 문자 종류가 모델을 결정한다(langForPart).
- * 자종별 내역은 Document.md "검색어의 문자 종류가 인식 모델을 결정한다" 참조.
+ * 자종별 내역은 Document.md "검색어를 표현할 수 있는 모델은 전부 채점한다" 참조.
  */
-export type RecLang = "ch" | "ko";
+export type RecLang = "ch" | "ko" | "ja";
+
+/** 로그용 사전 커버리지 설명. 모델을 추가하면 여기에도 한 줄 넣는다. */
+const REC_COVERAGE: Record<RecLang, string> = {
+  ch: "kanji/kana/latin/digits (zh-trained)",
+  ko: "hangul/latin/digits",
+  ja: "kanji/kana/latin/digits (ja-trained)",
+};
 
 export function isOcrReady(): boolean {
   return detSession !== null && recModels.size > 0;
@@ -59,6 +66,7 @@ export async function initOCR(modelsDir: string): Promise<void> {
   for (const [lang, model, dict] of [
     ["ch", "ocr-rec-ch", "ocr-dict-ch"],
     ["ko", "ocr-rec-ko", "ocr-dict-ko"],
+    ["ja", "ocr-rec-ja", "ocr-dict-ja"],
   ] as const) {
     const recPath = getModelPath(modelsDir, model);
     const dictPath = getModelPath(modelsDir, dict);
@@ -80,13 +88,12 @@ export async function initOCR(modelsDir: string): Promise<void> {
     const charIndex = new Map<string, number>();
     for (let i = 0; i < chars.length; i++) if (!charIndex.has(chars[i])) charIndex.set(chars[i], i + 1);
 
-    recModels.set(lang, { session, chars, charIndex });
-    // Spell out the coverage: "lang: ch" reads as "Chinese only" and it is not - see RecLang.
-    const covers = lang === "ch" ? "kanji/kana/latin/digits (ja, zh, en)" : "hangul/latin/digits (ko)";
-    console.log(`OCR rec loaded - lang: ${lang}, covers: ${covers}, classes: ${chars.length + 1}`);
+    recModels.set(lang, { session, charIndex });
+    // "lang: ch"가 "중국어 전용"으로 읽히지만 아니다 - RecLang 주석 참조.
+    console.log(`OCR rec loaded - lang: ${lang}, covers: ${REC_COVERAGE[lang]}, classes: ${chars.length + 1}`);
   }
 
-  console.log(`OCR ready - det: yes, rec: ${[...recModels.keys()].join(",")} (ch = CJK+latin incl. Japanese/English, ko = hangul)`);
+  console.log(`OCR ready - det: yes, rec: ${[...recModels.keys()].map((l) => `${l}(${REC_COVERAGE[l]})`).join(", ")}`);
 }
 
 // ============================================================
@@ -107,11 +114,6 @@ export function parseSearchLists(tsv: string): SearchList[] {
     .filter((line) => line.trim().length > 0)
     .map((raw) => ({ raw, parts: raw.split("\t").map((p) => p.trim()).filter((p) => p.length > 0) }))
     .filter((l) => l.parts.length > 0);
-}
-
-/** 한글이 하나라도 있으면 한국어 모델이 필요하다. 그 외는 chinese 사전이 커버한다. */
-function langForPart(part: string): RecLang {
-  return /[가-힣ㄱ-ㅎㅏ-ㅣ]/.test(part) ? "ko" : "ch";
 }
 
 /**
@@ -660,26 +662,6 @@ function toClassIdSets(text: string, model: RecModel): number[][] | null {
   return sets.length > 0 ? sets : null;
 }
 
-/** 디버깅용 greedy 디코딩. 매칭 판정에는 쓰지 않는다. */
-function greedyDecode(lat: Lattice, model: RecModel): string {
-  let out = "";
-  let prev = -1;
-  for (let t = 0; t < lat.T; t++) {
-    const base = t * lat.C;
-    let maxIdx = 0;
-    let maxVal = -Infinity;
-    for (let c = 0; c < lat.C; c++) {
-      if (lat.data[base + c] > maxVal) {
-        maxVal = lat.data[base + c];
-        maxIdx = c;
-      }
-    }
-    if (maxIdx !== 0 && maxIdx !== prev) out += model.chars[maxIdx - 1] ?? "";
-    prev = maxIdx;
-  }
-  return out;
-}
-
 // ============================================================
 // 파이프라인
 // ============================================================
@@ -695,8 +677,6 @@ export interface OcrResult {
   /** 리스트별 파트 점수 (임계값 조정용). */
   detail: { list: string; matched: boolean; parts: OcrPartScore[] }[];
   regions: number;
-  /** 디버깅용 greedy 디코딩 결과. 판정에는 쓰이지 않는다. */
-  fullText: string;
 }
 
 export async function performOCR(
@@ -704,7 +684,7 @@ export async function performOCR(
   searchLists: SearchList[],
   opts: { scoreThreshold: number; detScales: number[] },
 ): Promise<OcrResult> {
-  const empty: OcrResult = { found: [], detail: [], regions: 0, fullText: "" };
+  const empty: OcrResult = { found: [], detail: [], regions: 0 };
 
   if (!isOcrReady()) {
     console.log(`[ocr] SKIP - det: ${!!detSession}, rec: ${recModels.size}`);
@@ -739,39 +719,53 @@ export async function performOCR(
   for (const tb of ranked) strips.push(...(await buildStripsForRegion(src, tb.box, minStripWidth)));
   const stripMs = Date.now() - tStrip;
 
-  // 검색어가 실제로 요구하는 모델만 돌린다. 한글 검색어가 없으면 한국어 모델은 건너뛴다.
-  const neededLangs = new Set<RecLang>();
-  for (const list of searchLists) for (const part of list.parts) neededLangs.add(langForPart(part));
+  // 검색어를 표현할 수 있는 모델은 전부 돌리고 점수로 승부를 가린다.
+  //
+  // 표기만 보고 모델을 하나 고르면 안 된다. 한자는 일본어·중국어가 공유하므로 문자 종류로는
+  // 어느 모델이 잘 읽을지 알 수 없고, 사전에 있다는 것(표현 가능)과 잘 읽는다는 것(학습 언어)은
+  // 다른 문제다. 실측: 일본어 이름을 중국어 모델로 읽히면 간체자로 끌린다(亜→亚, 謝→谢).
+  //
+  // 다만 무조건 전부 돌리지는 않는다. toClassIdSets가 null이면 그 모델의 점수는 반드시 0이라
+  // 인식을 돌려도 결과가 정해져 있다. 인식이 전체 시간의 대부분이므로 그런 모델은 건너뛴다.
+  // 예: ko 사전은 한자·가나가 0자라 `大西亜玖璃`를 한 글자도 표현하지 못한다.
+  const setsByLang = new Map<RecLang, Map<string, number[][]>>();
+  const unrepresentable = new Set<string>();
+  for (const list of searchLists) {
+    for (const part of list.parts) {
+      let anyLang = false;
+      for (const [lang, model] of recModels) {
+        const sets = toClassIdSets(part, model);
+        if (!sets) continue;
+        anyLang = true;
+        let perPart = setsByLang.get(lang);
+        if (!perPart) setsByLang.set(lang, (perPart = new Map()));
+        perPart.set(part, sets);
+      }
+      if (!anyLang) unrepresentable.add(part);
+    }
+  }
+  for (const part of unrepresentable) {
+    console.warn(`Search part not representable - part: "${part}" (어느 사전에도 없는 문자, 매칭 불가)`);
+  }
 
   const tRec = Date.now();
   const latticesByLang = new Map<RecLang, Lattice[]>();
-  for (const lang of neededLangs) {
-    const model = recModels.get(lang);
-    if (!model) {
-      console.warn(`OCR rec model unavailable - lang: ${lang} (해당 언어 검색어는 매칭 불가)`);
-      continue;
-    }
-    latticesByLang.set(lang, await recognizeBatch(model, strips));
+  for (const lang of setsByLang.keys()) {
+    latticesByLang.set(lang, await recognizeBatch(recModels.get(lang)!, strips));
   }
   const recMs = Date.now() - tRec;
 
-  // 파트 하나의 점수 = 모든 격자 × 모든 표기 변형 중 최대값
+  // 파트 하나의 점수 = 표현 가능한 모든 모델 × 모든 격자 × 모든 표기 변형 중 최대값
   const scorePart = (part: string): number => {
-    const lang = langForPart(part);
-    const model = recModels.get(lang);
-    const lattices = latticesByLang.get(lang);
-    if (!model || !lattices || lattices.length === 0) return 0;
-
-    const sets = toClassIdSets(part, model);
-    if (!sets) {
-      console.warn(`Search part not representable - part: "${part}", lang: ${lang} (사전에 없는 문자)`);
-      return 0;
-    }
-
     let best = 0;
-    for (const lat of lattices) {
-      const s = ctcKeywordScore(lat, sets);
-      if (s > best) best = s;
+    for (const [lang, perPart] of setsByLang) {
+      const sets = perPart.get(part);
+      const lattices = latticesByLang.get(lang);
+      if (!sets || !lattices) continue;
+      for (const lat of lattices) {
+        const s = ctcKeywordScore(lat, sets);
+        if (s > best) best = s;
+      }
     }
     return best;
   };
@@ -785,18 +779,12 @@ export async function performOCR(
     if (matched) found.push(list.raw);
   }
 
-  // 진단용 전문. 판정 경로와 무관하므로 없어도 동작한다.
-  const debugLang: RecLang = latticesByLang.has("ch") ? "ch" : "ko";
-  const debugModel = recModels.get(debugLang);
-  const debugLattices = latticesByLang.get(debugLang) ?? [];
-  const fullText = debugModel ? debugLattices.map((l) => greedyDecode(l, debugModel)).filter((s) => s.length > 0).join(" | ") : "";
-
   console.log(
-    `[ocr] regions: ${boxes.length}, strips: ${strips.length}, lattices: ${[...latticesByLang].map(([l, v]) => `${l}=${v.length}`).join(",")}, matched: ${found.length}/${searchLists.length}, detMs: ${detMs}, stripMs: ${stripMs}, recMs: ${recMs}, text: "${fullText.slice(0, 120)}"`,
+    `[ocr] regions: ${boxes.length}, strips: ${strips.length}, lattices: ${[...latticesByLang].map(([l, v]) => `${l}=${v.length}`).join(",")}, matched: ${found.length}/${searchLists.length}, detMs: ${detMs}, stripMs: ${stripMs}, recMs: ${recMs}`,
   );
   for (const d of detail) {
     console.log(`[ocr]   list="${d.list.replace(/\t/g, "\\t")}" matched=${d.matched} parts=${d.parts.map((p) => `${p.text}:${p.score.toFixed(3)}`).join(" ")}`);
   }
 
-  return { found, detail, regions: boxes.length, fullText };
+  return { found, detail, regions: boxes.length };
 }

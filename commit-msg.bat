@@ -1,1 +1,0 @@
-set COMMIT_MSG=

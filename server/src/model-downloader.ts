@@ -23,9 +23,12 @@ const HF = "https://huggingface.co";
 
 export const MODELS = {
   // --- OCR: PaddleOCR ---
-  // chinese 사전은 한자 15565 + 히라가나 84 + 가타카나 89 + 라틴 52 + 숫자를 포함해
-  // 일본어/중국어/영어를 모두 커버한다. korean 사전은 한글 11172 전용(한자·가나 없음).
-  // 따라서 검색어의 문자 종류로 rec 모델을 고른다. 영어 전용 모델은 chinese와 중복이라 쓰지 않는다.
+  // 검색어를 표현할 수 있는 rec 모델은 전부 돌려 최대 점수를 취한다(ocr.ts의 RecLang 참조).
+  // chinese 사전(18,383자)은 한자·가나·라틴·숫자를 덮지만 학습 언어가 중국어라 일본어 표기를
+  // 간체자로 끌어당긴다(亜→亚). 그래서 japan 모델을 함께 둔다 - 사전이 덮는 것과 잘 읽는 것은
+  // 다른 문제이고, 한자는 두 언어가 공유해 표기만으로는 어느 쪽인지 정할 수 없다.
+  // korean 사전은 한글 전용(한자·가나 0자)이라 한글이 섞인 검색어에만 쓰인다.
+  // 영어 전용 모델은 chinese와 중복이라 쓰지 않는다.
   "ocr-det": {
     url: `${HF}/OleehyO/paddleocrv4.onnx/resolve/main/ch_PP-OCRv4_det.onnx`,
     filename: "ocr-det.onnx",
@@ -45,6 +48,17 @@ export const MODELS = {
   "ocr-dict-ko": {
     url: `${HF}/monkt/paddleocr-onnx/resolve/main/languages/korean/dict.txt`,
     filename: "ocr-dict-ko.txt",
+  },
+  // 일본어 전용 rec. monkt/paddleocr-onnx 에는 japan이 없어 다른 저장소에서 받는다.
+  // 4,399자(가나 167 + 한자 3,955 + 라틴·숫자)로 chinese보다 작지만 학습 언어가 일본어다.
+  // 출력 [N,T,4401] = 사전 + 공백 + blank 로 chinese와 구조가 같아 그대로 배치 추론된다.
+  "ocr-rec-ja": {
+    url: `${HF}/cycloneboy/japan_PP-OCRv4_rec_infer/resolve/main/model.onnx`,
+    filename: "ocr-rec-ja.onnx",
+  },
+  "ocr-dict-ja": {
+    url: `${HF}/cycloneboy/japan_PP-OCRv4_rec_infer/resolve/main/japan_dict.txt`,
+    filename: "ocr-dict-ja.txt",
   },
 
   // --- 실사 인물 ---
@@ -173,7 +187,15 @@ function fetchToFile(url: string, dest: string, redirectsLeft: number): Promise<
 }
 
 /** OCR 판정에만 필요한 모델. OCR 전용 기동에서 받고 로드하는 대상이 이것뿐이다. */
-export const OCR_MODEL_NAMES = ["ocr-det", "ocr-rec-ch", "ocr-dict-ch", "ocr-rec-ko", "ocr-dict-ko"] as const;
+export const OCR_MODEL_NAMES = [
+  "ocr-det",
+  "ocr-rec-ch",
+  "ocr-dict-ch",
+  "ocr-rec-ko",
+  "ocr-dict-ko",
+  "ocr-rec-ja",
+  "ocr-dict-ja",
+] as const;
 
 /**
  * `ocrOnly`이면 OCR 모델(약 99MB)만 받는다. 나머지 6개(약 772MB)는 받지도 로드하지도

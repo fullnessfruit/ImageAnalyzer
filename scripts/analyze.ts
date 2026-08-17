@@ -51,7 +51,7 @@ async function main() {
 
     console.log(`  detections   : ${JSON.stringify(result._detections)}`);
     console.log(`  ocr.found    : ${JSON.stringify(result.ocr.found)}`);
-    console.log(`  ocr.text     : ${result.ocr.fullText.slice(0, 200)}`);
+    console.log(`  ocr.detail   : ${result.ocr.detail.map((d) => `${d.list.replace(/\t/g, "\\t")}=${d.parts.map((p) => p.score.toFixed(3)).join("/")}`).join(", ")}`);
     console.log(`  faces        : ${result.faces.map((m) => `${m.name}(${m.score})`).join(", ") || "-"}`);
     console.log(`  facesWeak    : ${result.facesWeak.map((m) => `${m.name}(${m.score})`).join(", ") || "-"}`);
     console.log(`  characters   : ${result.characters.map((m) => `${m.name}[${m.source}](${m.score})`).join(", ") || "-"}`);
