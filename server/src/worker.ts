@@ -124,6 +124,9 @@ function hmacHex(payload: string): string {
   return nodeCrypto.createHmac("sha256", BROKER_SECRET).update(payload, "utf8").digest("hex");
 }
 
+/** 브로커가 돌려준 HTTP status를 실은 에러. 호출자가 409를 메시지 파싱 없이 구분한다. */
+type BrokerError = Error & { status?: number };
+
 async function brokerFetch(pathname: string, init: RequestInit = {}): Promise<any> {
   const method = (init.method || "GET").toUpperCase();
   const bodyText = typeof init.body === "string" ? init.body : "";
@@ -145,7 +148,9 @@ async function brokerFetch(pathname: string, init: RequestInit = {}): Promise<an
   // 텍스트로 읽어 받은 바이트 그대로 서명을 검증한다.
   const text = await response.text();
   if (!response.ok) {
-    throw new Error(`HTTP ${response.status}${text ? ` ${text.slice(0, 200)}` : ""}`);
+    const err = new Error(`HTTP ${response.status}${text ? ` ${text.slice(0, 200)}` : ""}`) as BrokerError;
+    err.status = response.status;
+    throw err;
   }
 
   // /health는 설계상 서명이 없다 (handshake이며 그것으로 아무것도 신뢰하지 않는다).
@@ -315,9 +320,17 @@ async function tick(): Promise<void> {
         `Job done - jobId: ${job.jobId}, images: ${job.imageUrls.length}, found: ${payload.found.length}, regions: ${payload.regions}, ms: ${elapsedMs}, error: ${payload.error ?? "none"}, postUrl: ${job.postUrl}`,
       );
     } catch (e: any) {
-      // 결과를 못 올리면 job은 브로커에 그대로 남는다. 재시도가 곧 그 job의 재실행이다.
-      console.error(`Result upload failed - jobId: ${job.jobId}, error: ${e.message}`);
-      return;
+      // 409 already-completed: 리스(기본 10분)가 만료된 사이에 다른 워커가 같은 job을 잡아
+      // 먼저 결과를 올렸다는 뜻이다. 브로커는 job 하나당 결과 하나만 받으므로 우리 답은
+      // 같은 입력에 대한 중복이고, 재시도해도 영원히 409다. 에러가 아니라 정상 종료로 보고
+      // 남은 큐를 계속 비운다.
+      if (e.status === 409) {
+        console.log(`Job already answered by another worker - jobId: ${job.jobId}, ms: ${elapsedMs}`);
+      } else {
+        // 그 외에는 job이 브로커에 그대로 남는다. 재시도가 곧 그 job의 재실행이다.
+        console.error(`Result upload failed - jobId: ${job.jobId}, error: ${e.message}`);
+        return;
+      }
     }
 
     // 대기 중인 job이 더 있으면 다음 폴링을 기다리지 않고 이어서 비운다. 노트북이 오래
