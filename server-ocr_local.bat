@@ -44,7 +44,7 @@ REM OCR_WORKER_BATTERY_GRACE_SEC (120)
 
 cd /d "%~dp0"
 
-if "%OCR_BROKER_URL%"=="" set OCR_BROKER_URL=http://ec2-35-78-169-107.ap-northeast-1.compute.amazonaws.com:3100
+if "%OCR_BROKER_URL%"=="" set OCR_BROKER_URL=http://127.0.0.1:3100
 
 REM Shut down at 25 percent while on battery. Set the variable to 0 to disable.
 if "%OCR_WORKER_BATTERY_SHUTDOWN_PERCENT%"=="" set OCR_WORKER_BATTERY_SHUTDOWN_PERCENT=25
