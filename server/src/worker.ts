@@ -320,7 +320,7 @@ async function tick(): Promise<void> {
         `Job done - jobId: ${job.jobId}, images: ${job.imageUrls.length}, found: ${payload.found.length}, regions: ${payload.regions}, ms: ${elapsedMs}, error: ${payload.error ?? "none"}, postUrl: ${job.postUrl}`,
       );
     } catch (e: any) {
-      // 409 already-completed: 리스(기본 10분)가 만료된 사이에 다른 워커가 같은 job을 잡아
+      // 409 already-completed: 리스(기본 30분)가 만료된 사이에 다른 워커가 같은 job을 잡아
       // 먼저 결과를 올렸다는 뜻이다. 브로커는 job 하나당 결과 하나만 받으므로 우리 답은
       // 같은 입력에 대한 중복이고, 재시도해도 영원히 409다. 에러가 아니라 정상 종료로 보고
       // 남은 큐를 계속 비운다.
