@@ -216,7 +216,7 @@ ArcFace / CCIP / 태그 벡터는 차원도 기하도 다르다. 섞어서 코�
 
 **워커 모드 (`npm run worker` / `server-ocr.bat`)**: HTTP 서버 대신 브로커를 당겨 일한다. 호출자인 크롬 확장은 공인 주소를 가진 매우 사양이 낮은 머신에서 돌고 이 프로그램은 집 노트북(NAT 안)에서 도는데, 확장이 노트북을 호출할 수 없으므로 방향을 뒤집은 것이다. 서버 모드는 그대로 남아 있고 같은 기계에서 부를 수 있을 때 쓴다. 상세는 `server/src/worker.ts`.
 
-**이 머신에는 `server-ocr.bat` 하나만 띄우면 된다.** 예전의 `server-ocr.bat`(HTTP 분석 서버 OCR 모드)은 부르는 데가 없어져서 삭제하고, 워커 스크립트가 그 이름을 물려받았다 - 익숙한 이름 하나로 합친 것이다. `server-ocr_local.bat`은 같은 워커를 이 머신에서 띄운 브로커(`127.0.0.1:3100`)에 붙이는 로컬 테스트용 사본이다. `npm run server:ocr`은 README의 수동 curl API용으로 남아 있으나 전용 런처는 없다. 워커는 그 서버와 통신하지 않는다: `performOCR`을 같은 프로세스에서 직접 부르고 밖으로는 브로커하고만 말한다. 크롬 확장 쪽도 HTTP 분석 서버를 호출하지 않는다 (`ocr-text-protocol.js`에 남은 것은 `blocksToTsv` / `splitFoundLines` / `matchedKeyword` 세 개의 순수 헬퍼뿐이며, 이름도 그래서 바뀌었다).
+**이 머신에는 `server-ocr.bat` 하나만 띄우면 된다.** 예전의 `server-ocr.bat`(HTTP 분석 서버 OCR 모드)은 부르는 데가 없어져서 삭제하고, 워커 스크립트가 그 이름을 물려받았다 - 익숙한 이름 하나로 합친 것이다. `server-ocr_local.bat`은 같은 워커를 이 머신에서 띄운 브로커(`127.0.0.1:3100`)에 붙이는 로컬 테스트용 사본이다. `server-ocr_shutdown.bat`은 스크립트 안의 `SHUTDOWN_AFTER_SEC`(초) 뒤에 PC를 끄는 런처로, `shutdown /s /t N`을 먼저 Windows에 등록한 뒤 `server-ocr.bat`을 호출한다(헤더와 env 기본값을 복제하지 않기 위해). 스크립트가 세는 것이 아니라 OS에 등록하므로 창을 닫아도 타이머는 남고, `shutdown /a`로 취소한다. 이미 예약이 있으면 등록에 실패하므로 워커를 띄우지 않고 종료한다. `npm run server:ocr`은 README의 수동 curl API용으로 남아 있으나 전용 런처는 없다. 워커는 그 서버와 통신하지 않는다: `performOCR`을 같은 프로세스에서 직접 부르고 밖으로는 브로커하고만 말한다. 크롬 확장 쪽도 HTTP 분석 서버를 호출하지 않는다 (`ocr-text-protocol.js`에 남은 것은 `blocksToTsv` / `splitFoundLines` / `matchedKeyword` 세 개의 순수 헬퍼뿐이며, 이름도 그래서 바뀌었다).
 
 **OCR 전용 기동**: `--ocr-only` 인자 또는 `IMAGEANALYZER_OCR_ONLY=1`. 비전 모델 6개(face-det 17MB, arcface 167MB, anime-face-det 43MB, anime-person-det 43MB, ccip 144MB, wd-tagger 362MB = 약 772MB)를 **다운로드도 로드도 하지 않는다.** OCR 모델 4개(det 4.6MB + rec-ch 81MB + rec-ko 13MB + rec-ja 9.7MB)만 쓰므로 메모리가 작은 호스트에서 돌릴 수 있다. 탐지 함수들이 세션 null을 빈 배열로 처리하도록 되어 있어 `analyzeImage`는 그대로 통과하고 `faces`/`facesWeak`/`characters`/`costumes`만 빈 배열이 된다. `GET /health`가 `ocrOnly`로 모드를 보고하고, `npm run server:ocr`로 기동한다 (전용 .bat 없음 - 그 이름은 이제 워커 런처다).
 
@@ -446,6 +446,7 @@ NAT가 막는 건 *확장 → 노트북* 한 방향이라, 노트북이 브로�
 - **폴링 틱과 별개의 `setInterval`로 돈다** (`OCR_WORKER_BATTERY_CHECK_MS`, 기본 60초). 틱 경계에서만 보면 job이 밀렸을 때 그 배수만큼 못 보는데 배터리는 그 사이에도 준다
 - **즉시 끄지 않는다.** `shutdown /s /t <유예>` (`OCR_WORKER_BATTERY_GRACE_SEC`, 기본 120초)로 예약해 진행 중인 job이 결과를 올릴 시간을 주고, 그 사이 `shutdown /a`로 취소할 수 있다
 - **한 번 예약하면 다시 걸지 않는다.** 유예 동안 재예약하면 사용자가 `shutdown /a`로 취소해도 다음 확인에서 되살아난다. 단 예약 명령 자체가 실패하면 플래그를 되돌려 재시도한다
+- **기존 예약이 있으면 지우고 건다.** Windows는 예약 종료를 하나만 허용해서, `server-ocr_shutdown.bat`의 시간 예약이 걸려 있으면 `shutdown /s`가 1190으로 실패한다. 그러면 긴 타이머 아래에서 배터리 보호가 무력화되므로 먼저 `shutdown /a`를 부르고(예약이 없어서 실패하면 무시) 예약한다. 배터리 쪽이 더 급하므로 대체가 맞다
 - 배터리를 **못 읽으면 끄지 않는다**. Windows가 아니거나(`process.platform !== 'win32'`), 배터리가 없는 데스크톱이거나, 조회가 실패하면 전부 "판단 보류"로 넘어간다
 - 조회는 `WMIC`이 아니라 PowerShell CIM(`Get-CimInstance Win32_Battery`)으로 한다 - WMIC은 폐기 예정이고 최신 Windows 빌드에는 없다
 

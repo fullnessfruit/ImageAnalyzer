@@ -405,6 +405,15 @@ async function checkBatteryAndMaybeShutdown(): Promise<void> {
   console.warn(
     `Battery low, shutting down - percent: ${battery.percent}, threshold: ${BATTERY_SHUTDOWN_PERCENT}, graceSec: ${BATTERY_SHUTDOWN_GRACE_SEC} (취소: shutdown /a)`,
   );
+  // Windows는 예약 종료를 하나만 허용한다. 이미 예약이 있으면(server-ocr_shutdown.bat의
+  // 시간 예약 등) `shutdown /s`가 1190으로 실패하므로 먼저 지운다. 예약이 없을 때의 실패는
+  // 무시한다. 배터리 쪽이 더 급하므로 기존 예약을 대체하는 것이 맞다.
+  try {
+    await execFileAsync("shutdown", ["/a"], { timeout: 20000, windowsHide: true });
+    console.warn("Pending shutdown replaced by battery shutdown");
+  } catch {
+    // 예약이 없었다
+  }
   try {
     await execFileAsync(
       "shutdown",
