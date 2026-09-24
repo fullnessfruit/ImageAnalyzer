@@ -16,7 +16,6 @@
 
 ## 의뢰자(사람) 측에서만 수행 가능한 작업(AI 측은 모두 완료 대기)
 
-- EC2 브로커에 AnnouncementAggregator/ocr-broker/server.js(lease 기본값 30분)를 배포하고 브로커를 재시작한다
 
 ## 지시(진행 중)
 
@@ -26,5 +25,3 @@
 
 ## 발견한 점(제안. 지시가 아님)
 
-- AnnouncementAggregator 리포(feature/77)에 lease 30분 변경(ocr-broker/server.js, ocr-broker/start-broker.bat, Document.md)이 커밋되지 않은 채 남아 있다
-- `新しいテキスト ドキュメント.txt`(빠른 시작 메모 4줄)는 이름이 Windows 기본 새 파일명이라 커밋에서 제외했다. 리포에 둘 것이면 파일명을 정해 달라
