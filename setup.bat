@@ -1,5 +1,10 @@
 @echo off
+cd /d "%~dp0"
 echo === ImageAnalyzer Setup ===
+
+echo Preparing the shared ImageAnalyzer and VoiceAnalyzer authentication key...
+node scripts\shared-secret.cjs ensure
+if errorlevel 1 goto :error
 
 echo Installing Node.js dependencies...
 call npm install

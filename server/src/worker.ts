@@ -43,7 +43,7 @@ const execFileAsync = promisify(execFile);
 const MODELS_DIR = path.join(PROJECT_ROOT, "models");
 
 const BROKER_URL = (process.env.OCR_BROKER_URL || "http://localhost:3100").replace(/\/+$/, "");
-const BROKER_SECRET = process.env.OCR_BROKER_SECRET || "";
+const BROKER_SECRET: string = require(path.join(PROJECT_ROOT, "scripts/shared-secret.cjs")).readSecret();
 const INTERVAL_MS = Number(process.env.OCR_WORKER_INTERVAL_MS || 60000);
 const WORKER_ID = process.env.OCR_WORKER_ID || `imageanalyzer-${process.pid}`;
 

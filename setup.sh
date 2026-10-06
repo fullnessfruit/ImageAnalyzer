@@ -1,7 +1,11 @@
 #!/bin/bash
 set -e
+cd "$(dirname "$0")"
 
 echo "=== ImageAnalyzer Setup ==="
+
+echo "Preparing the shared ImageAnalyzer and VoiceAnalyzer authentication key..."
+node scripts/shared-secret.cjs ensure
 
 echo "Installing Node.js dependencies..."
 npm install
