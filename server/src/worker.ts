@@ -283,6 +283,35 @@ async function runJob(job: Job): Promise<{ found: string[]; regions: number; err
   return { found: [...found], regions, error };
 }
 
+// Keep an in-progress job visible to the broker even when OCR takes over 30 minutes.
+// A failed or overlapping heartbeat never interrupts inference or duplicates a request.
+async function runJobWithHeartbeat(job: Job): ReturnType<typeof runJob> {
+  let sending = false;
+  let stopped = false;
+  const timer = setInterval(async () => {
+    if (sending || stopped) return;
+    sending = true;
+    try {
+      await brokerFetch(`/jobs/${encodeURIComponent(job.jobId)}/heartbeat`, {
+        method: "POST",
+        body: JSON.stringify({ workerId: WORKER_ID }),
+        signal: AbortSignal.timeout(15000),
+      });
+    } catch (e: any) {
+      if (!stopped) console.warn(`Worker heartbeat failed - jobId: ${job.jobId}, error: ${e.message}`);
+    } finally {
+      sending = false;
+    }
+  }, 60000);
+  timer.unref();
+  try {
+    return await runJob(job);
+  } finally {
+    stopped = true;
+    clearInterval(timer);
+  }
+}
+
 async function tick(): Promise<void> {
   let job: Job | null;
   try {
@@ -298,7 +327,7 @@ async function tick(): Promise<void> {
     const startedAt = Date.now();
     let payload: { found: string[]; regions: number; error: string | null };
     try {
-      payload = await runJob(job);
+      payload = await runJobWithHeartbeat(job);
     } catch (e: any) {
       // OCR 자체가 터진 경우. 결과를 올리지 않고 lease를 놓아 다음에 다시 잡히게 한다.
       console.error(`Job failed - jobId: ${job.jobId}, error: ${e.message}`);
