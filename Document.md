@@ -475,7 +475,7 @@ job에 나올 수 없으므로 경고로 남긴다.
 
 **Env**: `OCR_BROKER_URL`(코드 기본 `http://localhost:3100`. `server-ocr.bat`은 미설정 시 EC2 브로커
 주소를, `server-ocr_local.bat`은 `http://127.0.0.1:3100`을 넣는다), `OCR_BROKER_SECRET`(**필수**),
-`OCR_WORKER_INTERVAL_MS`(60000), `OCR_WORKER_ID`.
+`OCR_WORKER_INTERVAL_MS`(60000), `OCR_WORKER_ID`. 워커는 `scripts/shared-secret.cjs`로 키를 읽는다. 프로세스 환경 변수가 없으면 VoiceAnalyzer 또는 브로커 설치가 만든 같은 사용자 키를 사용하며, 실행 시 키를 생성하지 않는다.
 
 브로커는 모든 인터페이스에서 듣고 접속 제한은 방화벽(네트워크 방화벽 + 호스트 방화벽)이 이
 노트북의 출발지 IP로 건다. 따라서 `OCR_BROKER_URL`은 `http://<브로커 머신 주소>:3100`이 된다.
@@ -510,3 +510,22 @@ job에 나올 수 없으므로 경고로 남긴다.
 
 ### scripts/search-strings.ts
 **역할**: `searchStrings.tsv` 관리. `--add` / `--remove` / `--list`
+
+### scripts/shared-secret.cjs / setup.bat / setup.sh
+**역할**: ImageAnalyzer와 VoiceAnalyzer 및 OCR 브로커가 `OCR_BROKER_SECRET` 하나를 공유하게 한다. 설치 스크립트는 저장소 루트에서 helper의 `ensure`를 호출한 뒤 기존 의존성·모델·DB 설치를 진행한다. 설치가 워커나 VoiceAnalyzer 분석을 시작하지 않는다.
+
+- `storedSecret()` / `secretPath()`: Windows 사용자 환경 변수(`HKCU\Environment`), POSIX `${XDG_CONFIG_HOME:-~/.config}/announcement-analyzers/auth.json`의 같은 이름 필드를 읽는다. 잘못된 저장 파일은 새 키로 교체하지 않고 실패한다.
+- `readSecret()`: 명시된 프로세스 환경 변수가 우선, 없으면 저장 키. 생성은 하지 않는다.
+- `ensureSecret()`: 저장 키 우선, 없으면 현재 프로세스 키를 저장, 둘 다 없으면 암호 RNG 32바이트 hex 생성. VoiceAnalyzer가 먼저 만든 키를 오래된 터미널 값으로 덮어쓰지 않는다. POSIX는 0600 임시 파일을 완성한 뒤 hard link로 게시하여 동시 설치의 덮어쓰기를 막는다.
+- `powershell()`: Windows 사용자 환경 변수 읽기·쓰기만 수행한다. 키를 명령문에 삽입하지 않고 자식 프로세스 환경으로 전달한다.
+- `deleteSecret()`: 별도 명시적 삭제만 수행. Windows 사용자 변수 또는 POSIX 공유 키 파일만 제거하고, 없으면 성공한다.
+- CLI `ensure`는 값 없이 준비 상태, `show`는 다른 머신·확장 설정에 복사할 저장 키를 명시적으로 출력한다. `delete`는 공유 키를 제거하고 상대 프로그램 재설정과 기존 프로세스 재시작을 안내한다.
+
+이 helper는 별도 배포물인 AnnouncementAggregator `ocr-broker/shared-secret.cjs`와 같은 구현이며 VoiceAnalyzer `app/shared_secret.py`도 같은 저장 형식이다. 다른 머신에는 같은 키를 별도로 설정한다. 일반 제거에서 키를 삭제하지 않는다.
+
+### uninstall.bat / uninstall.sh / scripts/uninstall.cjs
+**역할**: 다시 설치할 수 있는 `node_modules`와 `server/dist`만 제거한다. 소스·설정·참조 이미지·모델·DB와 공유 키는 보존한다. 먼저 대상 전체가 실제 디렉터리인지 검사하며 링크·정션이면 지우기 전에 거부한다. 서버나 워커는 자동으로 중지하지 않는다.
+bat/sh는 공유 키 보존과 `delete-shared-secret.bat` / `.sh`의 위치, 삭제 시 VoiceAnalyzer와 모든 클라이언트도 같은 키로 재설정해야 함을 출력한다. 디렉터리가 이미 없어도 성공한다.
+
+### delete-shared-secret.bat / delete-shared-secret.sh
+**역할**: 프로그램 대신 공유 키만 지우는 명시적 실행 도구. `scripts/shared-secret.cjs delete`를 호출하며 실제 분석은 시작하지 않는다. Node 표준 라이브러리만 사용하므로 `node_modules`가 제거된 뒤에도 실행할 수 있다. 실행 중 프로세스와 터미널의 기존 환경은 유지되므로 재설정 뒤 재시작해야 한다.
