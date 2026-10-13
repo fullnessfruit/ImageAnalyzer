@@ -58,7 +58,7 @@ export interface Config {
  * ArcFace에서 0.8 같은 값은 동일 인물조차 전부 기각한다.
  */
 export const DEFAULT_CONFIG: Config = {
-  similarityThreshold: { face: 0.45, faceWeak: 0.28, character: 0.82, costume: 0.55 },
+  similarityThreshold: { face: 0.45, faceWeak: 0.28, character: 0.82, costume: 0.52 },
   margin: { face: 0.06, character: 0.04, costume: 0.05 },
   ocr: { scoreThreshold: 0.5, detScales: [960, 1600] },
   wdTagger: { characterTagThreshold: 0.6 },
@@ -78,8 +78,10 @@ export interface AnalyzeResult {
   ocr: OcrResult;
   /** 실물로 판정된 얼굴. */
   faces: Match[];
-  /** faceWeak 이상 face 미만. 사진 속 사진·저화질이 여기 떨어진다. 자동 판정에 쓰지 말 것. */
+  /** faceWeak 이상 face 미만. 재촬영·열화·포즈 차이 등 원인과 무관하게 검토만 한다. */
   facesWeak: Match[];
+  /** 등록된 태거 이름만 지지하고 CCIP는 임계값을 넘지 못한 검토용 결과. */
+  charactersWeak: Match[];
   characters: Match[];
   costumes: Match[];
   _detections: { realFaces: number; animeFaces: number; animePersons: number; textRegions: number };
@@ -151,64 +153,76 @@ async function recognizeFaces(
  *
  * WD-Tagger는 보조 신호일 뿐이다. 어휘가 약 2,751종으로 고정돼 있어 신작 캐릭터를
  * 아예 모른다 - 蓮ノ空 학원 캐릭터는 12명 전원이 어휘에 없다. 그래서 태거가 낸 이름은
- * 갤러리에 등록된 것만 통과시킨다.
+ * 갤러리에 등록된 것만 통과시키되 CCIP가 기각하면 검토용 약한 결과로 분리한다.
+ * CCIP가 확정하면 태거는 돌리지 않는다. 신원 결과가 이미 정해졌기 때문이다.
  */
-async function recognizeCharacters(imageBuffer: Buffer, persons: Detection[], cfg: Config): Promise<Match[]> {
+async function recognizeCharacters(
+  imageBuffer: Buffer,
+  persons: Detection[],
+  cfg: Config,
+): Promise<{ strong: Match[]; weak: Match[] }> {
   const ccipGallery = hasCcip() ? getGallery("character", "ccip") : [];
   const registered = new Set(ccipGallery.map((g) => g.name));
-  if (registered.size === 0) return [];
+  if (registered.size === 0) return { strong: [], weak: [] };
 
-  const matches: Match[] = [];
+  const strong: Match[] = [];
+  const weak: Match[] = [];
   // 캐릭터 영역이 없으면 이미지 전체를 하나의 영역으로 본다.
   const regions: (Box | null)[] = persons.length > 0 ? persons.map((p) => p.box) : [null];
 
   for (const box of regions) {
     const buf = box ? await cropRegion(imageBuffer, box) : imageBuffer;
-
-    // 이 영역에서 확정된 이름. 태거와 CCIP 중 하나만 확정해도 후보 수집 대상이 된다.
-    let confirmed: { name: string; score: number; source: string } | null = null;
-
-    if (hasWdTagger()) {
-      const tagged = await runTagger(buf, cfg.wdTagger.characterTagThreshold);
-      for (const c of tagged?.characters ?? []) {
-        const name = cfg.characterAliases[c.name] ?? c.name;
-        if (!registered.has(name)) continue;
-        if (!matches.some((m) => m.name === name && m.source === "tagger")) {
-          matches.push({ name, score: +c.prob.toFixed(4), margin: 0, box: box ?? undefined, source: "tagger" });
-        }
-        if (!confirmed) confirmed = { name, score: c.prob, source: "tagger" };
-      }
-    }
-
     const embedding = ccipGallery.length > 0 ? await extractCcipEmbedding(buf) : null;
-    if (embedding) {
-      const best = matchGallery(embedding, ccipGallery, cfg.similarityThreshold.character, cfg.margin.character, "character");
-      if (best) {
-        if (!matches.some((m) => m.name === best.name && m.source === "ccip")) {
-          matches.push({ name: best.name, score: +best.score.toFixed(4), margin: +best.margin.toFixed(4), box: box ?? undefined, source: "ccip" });
-        }
-        confirmed = { name: best.name, score: best.score, source: "ccip" };
-      }
-    }
-
-    // 태거만 확정하고 CCIP는 놓친 크롭이 갤러리에 가장 필요한 이미지다 -
-    // 그 화풍·구도를 CCIP가 아직 못 잡고 있다는 뜻이므로.
-    if (confirmed && embedding) {
+    const best = embedding
+      ? matchGallery(embedding, ccipGallery, cfg.similarityThreshold.character, cfg.margin.character, "character")
+      : null;
+    if (best && embedding) {
+      strong.push({
+        name: best.name,
+        score: +best.score.toFixed(4),
+        margin: +best.margin.toFixed(4),
+        box: box ? box.map(Math.round) as Box : undefined,
+        source: "ccip",
+      });
       await collectCandidate({
         dataDir: DATA_DIR,
         kind: "character",
         space: "ccip",
-        name: confirmed.name,
+        name: best.name,
         embedding,
         crop: buf,
-        score: confirmed.score,
-        source: confirmed.source,
+        score: best.score,
+        source: "ccip",
         config: cfg.candidates,
+      });
+      continue;
+    }
+
+    // CCIP가 확정하지 못했을 때만 태거를 실행한다. 태거는 등록된 이름 중
+    // 가장 높은 하나만 검토용으로 남기며, 높은 확률도 확정 신원을 뜻하지 않는다.
+    if (hasWdTagger()) {
+      const result = await runTagger(buf, cfg.wdTagger.characterTagThreshold);
+      let tagged: { name: string; prob: number } | null = null;
+      for (const c of result?.characters ?? []) {
+        const name = cfg.characterAliases[c.name] ?? c.name;
+        if (!registered.has(name)) continue;
+        if (!tagged || c.prob > tagged.prob) tagged = { name, prob: c.prob };
+      }
+      if (!tagged) continue;
+
+      // 태거는 겹친 인물 크롭에도 높은 확률로 잘못된 이름을 낼 수 있다.
+      // CCIP가 기각한 경우에는 신원을 확정하거나 후보 갤러리에 쓰지 않는다.
+      weak.push({
+        name: tagged.name,
+        score: +tagged.prob.toFixed(4),
+        margin: 0,
+        box: box ? box.map(Math.round) as Box : undefined,
+        source: "tagger",
       });
     }
   }
 
-  return matches;
+  return { strong, weak };
 }
 
 /**
@@ -219,6 +233,7 @@ async function recognizeCharacters(imageBuffer: Buffer, persons: Detection[], cf
  * 둘 중 하나만 바뀌어도 거리가 벌어진다. 대신 WD-Tagger의 의류 태그 확률 벡터를 쓴다.
  * 태그는 의미 단위라 화풍에 불변이고, 옷만 기술하므로 착용자에도 불변이다.
  * 머리·얼굴은 마스킹해 신원 단서를 제거한다.
+ * 한 이름에 여러 의상 변형이 등록될 수 있으므로 각 참조 중 가장 가까운 것을 판정한다.
  */
 async function recognizeCostumes(
   imageBuffer: Buffer,
@@ -244,6 +259,7 @@ async function recognizeCostumes(
       cfg.similarityThreshold.costume,
       cfg.margin.costume,
       "costume",
+      "max",
     );
     if (best) {
       matches.push({
@@ -291,7 +307,8 @@ export async function analyzeImage(
     ocr,
     faces: faces.strong,
     facesWeak: faces.weak,
-    characters,
+    characters: characters.strong,
+    charactersWeak: characters.weak,
     costumes,
     _detections: {
       realFaces: realFaces.length,

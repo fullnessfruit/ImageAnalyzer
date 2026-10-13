@@ -37,6 +37,7 @@ import { promisify } from "util";
 import { ensureModelsDownloaded } from "./model-downloader";
 import { initOCR, parseSearchLists, performOCR } from "./ocr";
 import { loadConfig, PROJECT_ROOT } from "./config";
+import { appendAnalysisLog } from "./analysis-log";
 
 const execFileAsync = promisify(execFile);
 
@@ -245,38 +246,68 @@ async function fetchImage(url: string): Promise<Buffer | null> {
  * 이유로, 워커가 자기 searchStrings.tsv를 보면 "목록에 없어서 못 찾음"과 "있는데 못 읽음"이
  * 구분되지 않아 확장의 미스 보고가 무의미해진다.
  */
-async function runJob(job: Job): Promise<{ found: string[]; regions: number; error: string | null }> {
+async function runJob(job: Job, attemptId: string): Promise<{ found: string[]; regions: number; error: string | null }> {
   const searchLists = parseSearchLists(job.searchStrings);
-  if (searchLists.length === 0) {
-    return { found: [], regions: 0, error: "job carried no search strings" };
-  }
-
   const cfg = loadConfig();
   const found = new Set<string>();
   let regions = 0;
   let fetched = 0;
 
-  for (const url of job.imageUrls) {
+  for (const [imageIndex, url] of job.imageUrls.entries()) {
+    const imageRef = {
+      mode: "worker" as const,
+      workerId: WORKER_ID,
+      attemptId,
+      jobId: job.jobId,
+      postUrl: job.postUrl,
+      imageIndex,
+      imageUrl: url,
+    };
+    // 요청 자체를 먼저 남긴다. 다운로드나 OCR이 실패해도 당시 URL과 전체 TSV를 잃지 않는다.
+    appendAnalysisLog({ event: "image_request", ...imageRef, searchStrings: job.searchStrings, ocrConfig: cfg.ocr });
+    if (searchLists.length === 0) {
+      appendAnalysisLog({ event: "image_result", ...imageRef, status: "no_search_strings" });
+      continue;
+    }
     if (!isAllowedImageUrl(url)) {
       // 정상 job에는 절대 나오지 않는다. 나왔다면 브로커에 이상한 것이 들어온 것이므로
       // 눈에 띄게 남긴다.
       console.warn(`Image URL rejected - jobId: ${job.jobId}, url: ${url} (허용 호스트: ${[...ALLOWED_IMAGE_HOSTS].join(", ")})`);
+      appendAnalysisLog({ event: "image_result", ...imageRef, status: "rejected_url" });
       continue;
     }
 
     const buffer = await fetchImage(url);
-    if (!buffer) continue;
+    if (!buffer) {
+      appendAnalysisLog({ event: "image_result", ...imageRef, status: "fetch_failed" });
+      continue;
+    }
     fetched++;
 
     const started = Date.now();
-    const result = await performOCR(buffer, searchLists, cfg.ocr);
+    const imageSha256 = nodeCrypto.createHash("sha256").update(buffer).digest("hex");
+    let result;
+    try {
+      result = await performOCR(buffer, searchLists, cfg.ocr);
+    } catch (e: any) {
+      appendAnalysisLog({ event: "image_result", ...imageRef, status: "ocr_failed", imageSha256, error: e.message });
+      throw e;
+    }
     regions += result.regions;
     for (const line of result.found) found.add(line);
+    appendAnalysisLog({
+      event: "image_result", ...imageRef, status: "analyzed", imageSha256,
+      bytes: buffer.length, found: result.found, detail: result.detail, regions: result.regions,
+      elapsedMs: Date.now() - started,
+    });
     console.log(
       `Image analyzed - jobId: ${job.jobId}, url: ${url}, ms: ${Date.now() - started}, regions: ${result.regions}, found: ${result.found.length}`,
     );
   }
 
+  if (searchLists.length === 0) {
+    return { found: [], regions: 0, error: "job carried no search strings" };
+  }
   // 한 장도 못 받았으면 재시도해도 같으므로 error로 마감한다. 일부만 받았으면 받은 만큼의
   // 판정이 유효하므로 정상 결과로 올린다.
   const error = fetched === 0 ? `none of ${job.imageUrls.length} images could be fetched` : null;
@@ -296,9 +327,15 @@ async function tick(): Promise<void> {
   // 큐가 빈 것은 정상이므로 아무것도 찍지 않는다(1분마다 도는 루프다).
   while (job) {
     const startedAt = Date.now();
+    const attemptId = nodeCrypto.randomUUID();
     let payload: { found: string[]; regions: number; error: string | null };
     try {
-      payload = await runJob(job);
+      payload = await runJob(job, attemptId);
+      appendAnalysisLog({
+        event: "job_result", mode: "worker", workerId: WORKER_ID, attemptId,
+        jobId: job.jobId, postUrl: job.postUrl, found: payload.found,
+        regions: payload.regions, error: payload.error,
+      });
     } catch (e: any) {
       // OCR 자체가 터진 경우. 결과를 올리지 않고 lease를 놓아 다음에 다시 잡히게 한다.
       console.error(`Job failed - jobId: ${job.jobId}, error: ${e.message}`);
@@ -311,6 +348,7 @@ async function tick(): Promise<void> {
     }
 
     const elapsedMs = Date.now() - startedAt;
+    let deliveryStatus: "uploaded" | "already_completed" = "uploaded";
     try {
       await brokerFetch(`/jobs/${encodeURIComponent(job.jobId)}/result`, {
         method: "POST",
@@ -325,13 +363,16 @@ async function tick(): Promise<void> {
       // 같은 입력에 대한 중복이고, 재시도해도 영원히 409다. 에러가 아니라 정상 종료로 보고
       // 남은 큐를 계속 비운다.
       if (e.status === 409) {
+        deliveryStatus = "already_completed";
         console.log(`Job already answered by another worker - jobId: ${job.jobId}, ms: ${elapsedMs}`);
       } else {
         // 그 외에는 job이 브로커에 그대로 남는다. 재시도가 곧 그 job의 재실행이다.
+        appendAnalysisLog({ event: "job_delivery", mode: "worker", workerId: WORKER_ID, attemptId, jobId: job.jobId, status: "upload_failed", error: e.message });
         console.error(`Result upload failed - jobId: ${job.jobId}, error: ${e.message}`);
         return;
       }
     }
+    appendAnalysisLog({ event: "job_delivery", mode: "worker", workerId: WORKER_ID, attemptId, jobId: job.jobId, status: deliveryStatus });
 
     // 대기 중인 job이 더 있으면 다음 폴링을 기다리지 않고 이어서 비운다. 노트북이 오래
     // 꺼져 있다가 켜졌을 때 1분에 하나씩 처리하면 하루치를 따라잡지 못한다.

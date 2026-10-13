@@ -2,18 +2,20 @@
 
 Local image analysis API server called from a Chrome extension. Answers four questions about an image:
 OCR list matching, real-person face identification, anime character identification, anime costume
-identification. Full-text extraction, scene understanding, silhouette identification, and real-person
-full-body ReID are explicitly out of scope.
+identification. Full-text extraction, scene understanding, and silhouette identification are outside
+the current functionality. Real-person identity from body-only images is not implemented; see
+BodyIdentityResearch.md for the tested approaches and the reason it cannot be estimated from the
+current reference set.
 
 ## Tech Stack
 - **Server**: Node.js + TypeScript (Express, onnxruntime-node, sharp, better-sqlite3). No Python.
-- **OCR**: PaddleOCR DBNet detection + per-language CRNN recognition (`ch` / `ja` / `ko`), ONNX
+- **OCR**: PaddleOCR DBNet detection + multilingual PP-OCRv5 mobile (`v5`), Japanese (`ja`), and Korean (`ko`) CTC recognition, ONNX
 - **Vision**: InsightFace SCRFD + ArcFace (real faces), deepghs YOLOv8 detectors + CCIP (anime),
   SmilingWolf WD-Tagger v3 (character names + clothing tags)
 
 ## Key Commands
 ```bash
-setup.bat                            # First run: deps, dirs, ONNX download (~890 MB). ./setup.sh on POSIX
+setup.bat                            # First run: deps, dirs, ONNX download (~815 MiB). ./setup.sh on POSIX
 npm run server                       # Start analysis server (port 3000)
 npm run server:ocr                   # HTTP server, OCR only (no vision models). Manual curl API; no .bat launcher
 npm run worker                       # Poll the OCR broker instead of serving HTTP. server-ocr.bat on Windows
@@ -36,7 +38,7 @@ takes `--promote <kind> <name>` and `--clear [kind] [name]`, where kind is `face
   list" and "in the list but unreadable" are indistinguishable in the answer.
 - **OCR-only mode** (`--ocr-only` / `IMAGEANALYZER_OCR_ONLY=1`) skips downloading and loading
   the six vision models. Detectors are null-safe, so `analyzeImage` still runs and simply
-  returns empty faces/characters/costumes.
+  returns empty faces/facesWeak/characters/charactersWeak/costumes.
 - **Worker mode** (`npm run worker`) reverses the direction: instead of serving HTTP it polls
   a broker for jobs. The Chrome extension runs on a public host and this runs behind NAT, so
   the extension cannot call in. OCR only, and the gallery DB is never opened. Jobs carry image
@@ -47,15 +49,16 @@ takes `--promote <kind> <name>` and `--clear [kind] [name]`, where kind is `face
 - **Every model that can represent the search string is scored; the max wins.** Script does not pick
   the model, because han characters are shared and dictionary coverage is not the same thing as
   training language. Models whose dictionary cannot represent the string are skipped, since their
-  score is provably zero and recognition dominates runtime. No language detection on the image.
+  score is provably zero, avoiding unnecessary inference. No language detection on the image.
 - **CLIP is not used.** Its space clusters by art style, not identity.
 - Real faces require 5-point landmark alignment before ArcFace; unaligned crops are out of distribution.
 - **Faces are reported in two bands.** `faces` clears the `face` threshold and is treated as a live
-  subject; `facesWeak` falls between `faceWeak` and `face`, which is where photos-of-photos and
-  low-quality crops land. Never auto-decide on `facesWeak`.
+  subject; `facesWeak` falls between `faceWeak` and `face`, including photos-of-photos and
+  unusual poses. Never auto-decide on `facesWeak`.
 - **Characters are reported only when already registered.** CCIP is the identity axis and matches from
   a single reference image. WD-Tagger is an auxiliary signal whose fixed vocabulary does not cover
-  recent characters, so tagger names pass only if the gallery already holds them.
+  recent characters, so tagger names pass only if the gallery already holds them. Tagger-only names
+  are review-only `charactersWeak`; only CCIP-confirmed characters are collected as candidates.
 - Costumes are IDF-weighted clothing-tag vectors with the head masked, so matching is invariant to art
   style and to who is wearing the outfit.
 - Thresholds are per-model and not mutually comparable; matches must also clear a top-1 vs top-2 margin.
@@ -71,7 +74,7 @@ takes `--promote <kind> <name>` and `--clear [kind] [name]`, where kind is `face
 - `server/src/ocr.ts`: detection, strip building, batched recognition, CTC keyword scoring
 - `server/src/inference.ts`: all ONNX inference (SCRFD, ArcFace, anime detectors, CCIP, WD-Tagger)
 - `server/src/analyze.ts`: orchestration shared by the server and the CLI
-- `server/src/matching.ts`: centroid + max scoring with margin rejection
+- `server/src/matching.ts`: identity centroid/max scoring or per-outfit max scoring with margin rejection
 - `server/src/candidates.ts`: candidate crop collection, dedup, and per-name caps
 - `server/src/db.ts`: SQLite; `embeddings` is the approved gallery and `candidates` is the pending
   review queue; `kind` × `space` keeps embedding spaces from being compared
@@ -79,6 +82,8 @@ takes `--promote <kind> <name>` and `--clear [kind] [name]`, where kind is `face
 - `server/src/index.ts`: HTTP layer only
 - `server/src/worker.ts`: broker-polling mode for running behind NAT
 - `server/src/config.ts`: config.json loader shared by the server, the CLI and the worker
+- `server/src/analysis-log.ts`: persistent per-image UTC request and result logs in `log/`
+- `BodyIdentityResearch.md`: body-only identity methods, local test results, and conditions for revisiting the task
 
 ## Detailed Documentation
 

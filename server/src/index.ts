@@ -2,9 +2,9 @@
  * 분석 서버 - HTTP 계층.
  *
  * POST /analyze 가 네 가지를 판정한다:
- *   ocr        - searchStrings.tsv의 리스트 중 하나라도 이미지에 있는가
+ *   ocr        - 요청 검색 목록(미전달 시 searchStrings.tsv) 중 하나라도 이미지에 있는가
  *   faces      - 실사 인물 (SCRFD 랜드마크 정합 → ArcFace → 갤러리)
- *   characters - 애니 캐릭터 (WD-Tagger 제로샷 이름 + CCIP 갤러리 매칭)
+ *   characters - 애니 캐릭터 (CCIP 갤러리 확정, WD-Tagger 단독은 charactersWeak)
  *   costumes   - 캐릭터 의상 (머리 마스킹 → WD-Tagger 의류 태그 벡터 → 갤러리)
  *
  * config.json은 요청마다 다시 읽어 재시작 없이 반영된다.
@@ -16,13 +16,14 @@
  *
  * `--ocr-only`(또는 IMAGEANALYZER_OCR_ONLY=1)로 기동하면 OCR만 활성화한다. 비전 모델
  * 6개(약 772MB)를 받지도 로드하지도 않으므로 메모리가 작은 호스트에서 돌릴 수 있다.
- * 이때 faces/characters/costumes는 항상 빈 배열이다.
+ * 이때 faces/facesWeak/characters/charactersWeak/costumes는 항상 빈 배열이다.
  */
 
 import express from "express";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
+import nodeCrypto from "crypto";
 
 import { initDB, countEmbeddings } from "./db";
 import { ensureModelsDownloaded } from "./model-downloader";
@@ -30,6 +31,7 @@ import { initOCR, parseSearchLists, isOcrReady } from "./ocr";
 import { loadModels, hasArcFace, hasCcip, hasWdTagger } from "./inference";
 import { analyzeImage } from "./analyze";
 import { loadConfig, PROJECT_ROOT } from "./config";
+import { appendAnalysisLog } from "./analysis-log";
 
 const MODELS_DIR = path.join(PROJECT_ROOT, "models");
 const DB_DIR = path.join(PROJECT_ROOT, "db");
@@ -53,7 +55,7 @@ async function main() {
   await ensureModelsDownloaded(MODELS_DIR, OCR_ONLY);
   initDB(DB_DIR);
   // 비전 세션을 만들지 않는다. 탐지기는 세션이 없으면 빈 배열을 돌려주도록 되어 있어
-  // analyzeImage는 그대로 통과하고 faces/characters/costumes만 비게 된다.
+  // analyzeImage는 그대로 통과하고 비전 결과 배열만 비게 된다.
   if (!OCR_ONLY) await loadModels(MODELS_DIR);
   await initOCR(MODELS_DIR);
 
@@ -84,11 +86,33 @@ async function main() {
       const provided = typeof req.body?.searchStrings === "string" ? req.body.searchStrings : "";
       const searchLists = provided.trim().length > 0 ? parseSearchLists(provided) : loadSearchLists();
       const listSource = provided.trim().length > 0 ? "request" : "file";
+      const cfg = loadConfig();
+      const imageRef = {
+        mode: "http" as const,
+        requestId: nodeCrypto.randomUUID(),
+        imageUrl: typeof req.body?.imageUrl === "string" ? req.body.imageUrl.trim() || null : null,
+        imageName: req.file.originalname,
+        imageSha256: nodeCrypto.createHash("sha256").update(req.file.buffer).digest("hex"),
+      };
+      appendAnalysisLog({
+        event: "image_request", ...imageRef, listSource,
+        searchStrings: searchLists.map((list) => list.raw).join("\n"), config: cfg,
+      });
 
-      const result = await analyzeImage(req.file.buffer, searchLists, loadConfig());
+      let result;
+      try {
+        result = await analyzeImage(req.file.buffer, searchLists, cfg);
+      } catch (err: any) {
+        appendAnalysisLog({ event: "image_result", ...imageRef, status: "analysis_failed", error: err.message });
+        throw err;
+      }
+      appendAnalysisLog({
+        event: "image_result", ...imageRef, status: "analyzed",
+        result,
+      });
 
       console.log(
-        `Analyze done - ms: ${result._elapsedMs}, listSource: ${listSource}, lists: ${searchLists.length}, ocrFound: ${result.ocr.found.length}, faces: ${result.faces.length}, characters: ${result.characters.length}, costumes: ${result.costumes.length}`,
+        `Analyze done - ms: ${result._elapsedMs}, listSource: ${listSource}, lists: ${searchLists.length}, ocrFound: ${result.ocr.found.length}, faces: ${result.faces.length}, characters: ${result.characters.length}, charactersWeak: ${result.charactersWeak.length}, costumes: ${result.costumes.length}`,
       );
       res.json(result);
     } catch (err: any) {
