@@ -29,26 +29,23 @@ interface RecModel {
   session: ort.InferenceSession;
   /** 문자 → class 인덱스(1-based). class 0은 blank. */
   charIndex: Map<string, number>;
+  classCount: number;
+  /** 모델별 학습 전처리. v5는 BGR이고 기존 ja/ko는 RGB를 유지한다. */
+  channelOrder: "rgb" | "bgr";
 }
-const recModels = new Map<RecLang, RecModel>();
+const recModels = new Map<RecKind, RecModel>();
 
 /**
- * 검색어를 표현할 수 있는 모델은 전부 채점에 쓴다. 표기로 모델을 고르지 않는다.
- *
- * 이름이 오해를 부르지만 **"ch"는 중국어 전용이 아니라 CJK+라틴 통합 사전**이다.
- * 18,383자에 한자·히라가나·가타카나·라틴·숫자가 모두 들어 있다.
- * 다만 **사전이 덮는 것과 모델이 잘 읽는 것은 다르다** - 학습 언어는 중국어라
- * 일본어 표기를 간체자로 끌어당긴다(亜→亚). 그래서 표현 가능한 모델을 전부 돌린다.
- * "ko"(11,945자)에는 한자와 가나가 아예 없어 한글이 섞인 검색어만 이쪽이 필요하다.
- * 자종별 내역은 Document.md "검색어를 표현할 수 있는 모델은 전부 채점한다" 참조.
+ * v5가 중·일·영 문자를 읽고 ja가 작은 일본어 글자에서 v5의 누락을 보완한다.
+ * ko는 일반적인 한글 검색어를 맡는다. 표현 가능한 모델은 전부 채점한다.
  */
-export type RecLang = "ch" | "ko" | "ja";
+export type RecKind = "v5" | "ja" | "ko";
 
 /** 로그용 사전 커버리지 설명. 모델을 추가하면 여기에도 한 줄 넣는다. */
-const REC_COVERAGE: Record<RecLang, string> = {
-  ch: "kanji/kana/latin/digits (zh-trained)",
+const REC_COVERAGE: Record<RecKind, string> = {
+  v5: "han/kana/latin/digits (zh/ja/en-trained)",
+  ja: "han/kana/latin/digits (ja-trained)",
   ko: "hangul/latin/digits",
-  ja: "kanji/kana/latin/digits (ja-trained)",
 };
 
 export function isOcrReady(): boolean {
@@ -63,15 +60,15 @@ export async function initOCR(modelsDir: string): Promise<void> {
   }
   detSession = await ort.InferenceSession.create(detPath, { intraOpNumThreads: 4 });
 
-  for (const [lang, model, dict] of [
-    ["ch", "ocr-rec-ch", "ocr-dict-ch"],
-    ["ko", "ocr-rec-ko", "ocr-dict-ko"],
-    ["ja", "ocr-rec-ja", "ocr-dict-ja"],
+  for (const [kind, model, dict, channelOrder] of [
+    ["v5", "ocr-rec-v5", "ocr-dict-v5", "bgr"],
+    ["ja", "ocr-rec-ja", "ocr-dict-ja", "rgb"],
+    ["ko", "ocr-rec-ko", "ocr-dict-ko", "rgb"],
   ] as const) {
     const recPath = getModelPath(modelsDir, model);
     const dictPath = getModelPath(modelsDir, dict);
     if (!fs.existsSync(recPath) || !fs.existsSync(dictPath)) {
-      console.warn(`OCR rec model missing - lang: ${lang}`);
+      console.warn(`OCR rec model missing - model: ${kind}`);
       continue;
     }
 
@@ -88,9 +85,8 @@ export async function initOCR(modelsDir: string): Promise<void> {
     const charIndex = new Map<string, number>();
     for (let i = 0; i < chars.length; i++) if (!charIndex.has(chars[i])) charIndex.set(chars[i], i + 1);
 
-    recModels.set(lang, { session, charIndex });
-    // "lang: ch"가 "중국어 전용"으로 읽히지만 아니다 - RecLang 주석 참조.
-    console.log(`OCR rec loaded - lang: ${lang}, covers: ${REC_COVERAGE[lang]}, classes: ${chars.length + 1}`);
+    recModels.set(kind, { session, charIndex, classCount: chars.length + 1, channelOrder });
+    console.log(`OCR rec loaded - model: ${kind}, covers: ${REC_COVERAGE[kind]}, classes: ${chars.length + 1}`);
   }
 
   console.log(`OCR ready - det: yes, rec: ${[...recModels.keys()].map((l) => `${l}(${REC_COVERAGE[l]})`).join(", ")}`);
@@ -408,9 +404,9 @@ function mergeIntoLines(boxes: TextBox[]): TextBox[] {
 const REC_HEIGHT = 48;
 /** 이보다 넓어지면 겹치며 분할한다. 압축하면 문자당 픽셀이 부족해 CTC가 문자를 분리하지 못한다. */
 const REC_CHUNK_WIDTH = 1200;
-/** 한 배치에 넣을 최대 스트립 수. 폭이 비슷한 것끼리 묶어 패딩 낭비를 줄인다. */
-const REC_BATCH = 8;
-/** 인식할 영역 수 상한. 다국어 rec 모델이 무거워 이 값이 사실상 최악 케이스 지연을 정한다. */
+/** 넓이가 서로 다른 스트립의 오른쪽 패딩 비용을 억제한다. 운용 이미지에서 8장보다 4장이 빨랐다. */
+const REC_BATCH = 4;
+/** 인식할 영역 수 상한. 텍스트가 많은 이미지의 최악 지연을 제한한다. */
 const MAX_REGIONS = 40;
 
 /** [T, C] 확률 격자. */
@@ -448,9 +444,10 @@ async function recognizeBatch(model: RecModel, strips: Strip[]): Promise<Lattice
       const { rgb, width } = strips[idx];
       const base = b * 3 * px;
       for (let c = 0; c < 3; c++) {
+        const sourceChannel = model.channelOrder === "bgr" ? 2 - c : c;
         for (let y = 0; y < REC_HEIGHT; y++) {
           for (let x = 0; x < width; x++) {
-            input[base + c * px + y * maxW + x] = (rgb[(y * width + x) * 3 + c] / 255.0 - 0.5) / 0.5;
+            input[base + c * px + y * maxW + x] = (rgb[(y * width + x) * 3 + sourceChannel] / 255.0 - 0.5) / 0.5;
           }
         }
       }
@@ -464,6 +461,9 @@ async function recognizeBatch(model: RecModel, strips: Strip[]): Promise<Lattice
     if (dims.length !== 3) continue;
 
     const [, T, C] = dims;
+    if (C !== model.classCount) {
+      throw new Error(`OCR model/dictionary class mismatch - expected: ${model.classCount}, actual: ${C}`);
+    }
     const data = out.data as Float32Array;
     group.forEach((idx, b) => {
       const realT = Math.max(1, Math.ceil((T * strips[idx].width) / maxW));
@@ -721,27 +721,26 @@ export async function performOCR(
 
   // 검색어를 표현할 수 있는 모델은 전부 돌리고 점수로 승부를 가린다.
   //
-  // 표기만 보고 모델을 하나 고르면 안 된다. 한자는 일본어·중국어가 공유하므로 문자 종류로는
-  // 어느 모델이 잘 읽을지 알 수 없고, 사전에 있다는 것(표현 가능)과 잘 읽는다는 것(학습 언어)은
-  // 다른 문제다. 실측: 일본어 이름을 중국어 모델로 읽히면 간체자로 끌린다(亜→亚, 謝→谢).
+  // v5가 중·일 문자를 함께 읽어도 작은 일본어 글자에서 ja가 더 잘 읽는 사례가 있다.
+  // 라틴처럼 여러 사전에 있는 검색어도 모두 채점한다. 표기만으로 모델을 고르지 않는다.
   //
   // 다만 무조건 전부 돌리지는 않는다. toClassIdSets가 null이면 그 모델의 점수는 반드시 0이라
-  // 인식을 돌려도 결과가 정해져 있다. 인식이 전체 시간의 대부분이므로 그런 모델은 건너뛴다.
+  // 인식을 돌려도 결과가 정해져 있다. 불필요한 ONNX 추론은 건너뛴다.
   // 예: ko 사전은 한자·가나가 0자라 `大西亜玖璃`를 한 글자도 표현하지 못한다.
-  const setsByLang = new Map<RecLang, Map<string, number[][]>>();
+  const setsByKind = new Map<RecKind, Map<string, number[][]>>();
   const unrepresentable = new Set<string>();
   for (const list of searchLists) {
     for (const part of list.parts) {
-      let anyLang = false;
-      for (const [lang, model] of recModels) {
+      let anyModel = false;
+      for (const [kind, model] of recModels) {
         const sets = toClassIdSets(part, model);
         if (!sets) continue;
-        anyLang = true;
-        let perPart = setsByLang.get(lang);
-        if (!perPart) setsByLang.set(lang, (perPart = new Map()));
+        anyModel = true;
+        let perPart = setsByKind.get(kind);
+        if (!perPart) setsByKind.set(kind, (perPart = new Map()));
         perPart.set(part, sets);
       }
-      if (!anyLang) unrepresentable.add(part);
+      if (!anyModel) unrepresentable.add(part);
     }
   }
   for (const part of unrepresentable) {
@@ -749,18 +748,18 @@ export async function performOCR(
   }
 
   const tRec = Date.now();
-  const latticesByLang = new Map<RecLang, Lattice[]>();
-  for (const lang of setsByLang.keys()) {
-    latticesByLang.set(lang, await recognizeBatch(recModels.get(lang)!, strips));
+  const latticesByKind = new Map<RecKind, Lattice[]>();
+  for (const kind of setsByKind.keys()) {
+    latticesByKind.set(kind, await recognizeBatch(recModels.get(kind)!, strips));
   }
   const recMs = Date.now() - tRec;
 
   // 파트 하나의 점수 = 표현 가능한 모든 모델 × 모든 격자 × 모든 표기 변형 중 최대값
   const scorePart = (part: string): number => {
     let best = 0;
-    for (const [lang, perPart] of setsByLang) {
+    for (const [kind, perPart] of setsByKind) {
       const sets = perPart.get(part);
-      const lattices = latticesByLang.get(lang);
+      const lattices = latticesByKind.get(kind);
       if (!sets || !lattices) continue;
       for (const lat of lattices) {
         const s = ctcKeywordScore(lat, sets);
@@ -780,7 +779,7 @@ export async function performOCR(
   }
 
   console.log(
-    `[ocr] regions: ${boxes.length}, strips: ${strips.length}, lattices: ${[...latticesByLang].map(([l, v]) => `${l}=${v.length}`).join(",")}, matched: ${found.length}/${searchLists.length}, detMs: ${detMs}, stripMs: ${stripMs}, recMs: ${recMs}`,
+    `[ocr] regions: ${boxes.length}, strips: ${strips.length}, lattices: ${[...latticesByKind].map(([k, v]) => `${k}=${v.length}`).join(",")}, matched: ${found.length}/${searchLists.length}, detMs: ${detMs}, stripMs: ${stripMs}, recMs: ${recMs}`,
   );
   for (const d of detail) {
     console.log(`[ocr]   list="${d.list.replace(/\t/g, "\\t")}" matched=${d.matched} parts=${d.parts.map((p) => `${p.text}:${p.score.toFixed(3)}`).join(" ")}`);

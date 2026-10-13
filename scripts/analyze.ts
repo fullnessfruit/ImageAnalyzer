@@ -8,12 +8,15 @@
 
 import path from "path";
 import fs from "fs";
+import nodeCrypto from "crypto";
+import { pathToFileURL } from "url";
 import { initDB } from "../server/src/db";
 import { ensureModelsDownloaded } from "../server/src/model-downloader";
 import { initOCR, parseSearchLists } from "../server/src/ocr";
 import { loadModels } from "../server/src/inference";
 import { analyzeImage } from "../server/src/analyze";
 import { loadConfig } from "../server/src/config";
+import { appendAnalysisLog } from "../server/src/analysis-log";
 
 const PROJECT_ROOT = path.resolve(__dirname, "..");
 const SUPPORTED_EXT = new Set([".jpg", ".jpeg", ".png", ".bmp", ".webp"]);
@@ -42,7 +45,26 @@ async function main() {
 
   for (const file of files) {
     console.log(`\n${"=".repeat(70)}\n${path.basename(file)}\n${"=".repeat(70)}`);
-    const result = await analyzeImage(fs.readFileSync(file), searchLists, cfg);
+    const image = fs.readFileSync(file);
+    const imageRef = {
+      mode: "cli" as const,
+      requestId: nodeCrypto.randomUUID(),
+      imageUrl: pathToFileURL(file).href,
+      imageName: path.basename(file),
+      imageSha256: nodeCrypto.createHash("sha256").update(image).digest("hex"),
+    };
+    appendAnalysisLog({
+      event: "image_request", ...imageRef, listSource: "file",
+      searchStrings: searchLists.map((list) => list.raw).join("\n"), config: cfg,
+    });
+    let result;
+    try {
+      result = await analyzeImage(image, searchLists, cfg);
+    } catch (err: any) {
+      appendAnalysisLog({ event: "image_result", ...imageRef, status: "analysis_failed", error: err.message });
+      throw err;
+    }
+    appendAnalysisLog({ event: "image_result", ...imageRef, status: "analyzed", result });
 
     if (asJson) {
       console.log(JSON.stringify(result, null, 2));
@@ -55,6 +77,7 @@ async function main() {
     console.log(`  faces        : ${result.faces.map((m) => `${m.name}(${m.score})`).join(", ") || "-"}`);
     console.log(`  facesWeak    : ${result.facesWeak.map((m) => `${m.name}(${m.score})`).join(", ") || "-"}`);
     console.log(`  characters   : ${result.characters.map((m) => `${m.name}[${m.source}](${m.score})`).join(", ") || "-"}`);
+    console.log(`  charactersWeak: ${result.charactersWeak.map((m) => `${m.name}[${m.source}](${m.score})`).join(", ") || "-"}`);
     console.log(`  costumes     : ${result.costumes.map((m) => `${m.name}(${m.score})`).join(", ") || "-"}`);
     console.log(`  elapsed      : ${result._elapsedMs}ms`);
   }

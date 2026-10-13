@@ -20,26 +20,34 @@ interface ModelInfo {
 }
 
 const HF = "https://huggingface.co";
+// rec 출력의 클래스 순서는 사전과 정확히 같아야 한다. 두 저장소의 검증된 버전을 함께 고정한다.
+const OCR_V5_MODEL_REV = "ed152b8b495f84de93cda5709d768548a9127622";
+const OCR_V5_DICT_REV = "dab3fe35379033fdcb2d0e9572fac0b36c9a9ebf";
 
 export const MODELS = {
   // --- OCR: PaddleOCR ---
-  // 검색어를 표현할 수 있는 rec 모델은 전부 돌려 최대 점수를 취한다(ocr.ts의 RecLang 참조).
-  // chinese 사전(18,383자)은 한자·가나·라틴·숫자를 덮지만 학습 언어가 중국어라 일본어 표기를
-  // 간체자로 끌어당긴다(亜→亚). 그래서 japan 모델을 함께 둔다 - 사전이 덮는 것과 잘 읽는 것은
-  // 다른 문제이고, 한자는 두 언어가 공유해 표기만으로는 어느 쪽인지 정할 수 없다.
-  // korean 사전은 한글 전용(한자·가나 0자)이라 한글이 섞인 검색어에만 쓰인다.
-  // 영어 전용 모델은 chinese와 중복이라 쓰지 않는다.
+  // PP-OCRv5 모바일 rec이 무거운 ch 모델을 대체한다. 일본어의 작은 글자를 v5가
+  // 놓친 실제 운용 사례가 있어 경량 ja 모델을 함께 유지한다. 한글은 ko 모델이 맡는다.
+  // 검색어를 표현할 수 있는 rec 모델은 전부 돌려 최대 점수를 취한다(ocr.ts의 RecKind 참조).
   "ocr-det": {
     url: `${HF}/OleehyO/paddleocrv4.onnx/resolve/main/ch_PP-OCRv4_det.onnx`,
     filename: "ocr-det.onnx",
   },
-  "ocr-rec-ch": {
-    url: `${HF}/monkt/paddleocr-onnx/resolve/main/languages/chinese/rec.onnx`,
-    filename: "ocr-rec-ch.onnx",
+  "ocr-rec-v5": {
+    url: `${HF}/PaddlePaddle/PP-OCRv5_mobile_rec_onnx/resolve/${OCR_V5_MODEL_REV}/inference.onnx`,
+    filename: "ocr-rec-v5.onnx",
   },
-  "ocr-dict-ch": {
-    url: `${HF}/monkt/paddleocr-onnx/resolve/main/languages/chinese/dict.txt`,
-    filename: "ocr-dict-ch.txt",
+  "ocr-dict-v5": {
+    url: `https://raw.githubusercontent.com/PaddlePaddle/PaddleOCR/${OCR_V5_DICT_REV}/ppocr/utils/dict/ppocrv5_dict.txt`,
+    filename: "ocr-dict-v5.txt",
+  },
+  "ocr-rec-ja": {
+    url: `${HF}/cycloneboy/japan_PP-OCRv4_rec_infer/resolve/main/model.onnx`,
+    filename: "ocr-rec-ja.onnx",
+  },
+  "ocr-dict-ja": {
+    url: `${HF}/cycloneboy/japan_PP-OCRv4_rec_infer/resolve/main/japan_dict.txt`,
+    filename: "ocr-dict-ja.txt",
   },
   "ocr-rec-ko": {
     url: `${HF}/monkt/paddleocr-onnx/resolve/main/languages/korean/rec.onnx`,
@@ -49,18 +57,6 @@ export const MODELS = {
     url: `${HF}/monkt/paddleocr-onnx/resolve/main/languages/korean/dict.txt`,
     filename: "ocr-dict-ko.txt",
   },
-  // 일본어 전용 rec. monkt/paddleocr-onnx 에는 japan이 없어 다른 저장소에서 받는다.
-  // 4,399자(가나 167 + 한자 3,955 + 라틴·숫자)로 chinese보다 작지만 학습 언어가 일본어다.
-  // 출력 [N,T,4401] = 사전 + 공백 + blank 로 chinese와 구조가 같아 그대로 배치 추론된다.
-  "ocr-rec-ja": {
-    url: `${HF}/cycloneboy/japan_PP-OCRv4_rec_infer/resolve/main/model.onnx`,
-    filename: "ocr-rec-ja.onnx",
-  },
-  "ocr-dict-ja": {
-    url: `${HF}/cycloneboy/japan_PP-OCRv4_rec_infer/resolve/main/japan_dict.txt`,
-    filename: "ocr-dict-ja.txt",
-  },
-
   // --- 실사 인물 ---
   // SCRFD는 5점 랜드마크를 함께 출력한다. ArcFace는 그 랜드마크로 정규 템플릿에
   // 워프된 얼굴로만 학습되었으므로 정합이 필수다.
@@ -189,16 +185,16 @@ function fetchToFile(url: string, dest: string, redirectsLeft: number): Promise<
 /** OCR 판정에만 필요한 모델. OCR 전용 기동에서 받고 로드하는 대상이 이것뿐이다. */
 export const OCR_MODEL_NAMES = [
   "ocr-det",
-  "ocr-rec-ch",
-  "ocr-dict-ch",
-  "ocr-rec-ko",
-  "ocr-dict-ko",
+  "ocr-rec-v5",
+  "ocr-dict-v5",
   "ocr-rec-ja",
   "ocr-dict-ja",
+  "ocr-rec-ko",
+  "ocr-dict-ko",
 ] as const;
 
 /**
- * `ocrOnly`이면 OCR 모델(약 99MB)만 받는다. 나머지 6개(약 772MB)는 받지도 로드하지도
+ * `ocrOnly`이면 OCR 모델(약 43MiB)만 받는다. 나머지 6개(약 772MiB)는 받지도 로드하지도
  * 않으므로 메모리가 작은 호스트에서도 기동할 수 있다.
  */
 export async function ensureModelsDownloaded(modelsDir: string, ocrOnly = false): Promise<void> {

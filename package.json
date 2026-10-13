@@ -5,6 +5,7 @@
   "main": "server/dist/index.js",
   "scripts": {
     "build": "tsc -p server/tsconfig.json",
+    "test": "npm run build && node --test",
     "server": "npm run build && node server/dist/index.js",
     "server:ocr": "npm run build && node server/dist/index.js --ocr-only",
     "worker": "npm run build && node server/dist/worker.js",

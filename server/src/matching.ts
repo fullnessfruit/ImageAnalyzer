@@ -4,7 +4,8 @@
  * 절대 임계값 하나로 자르지 않는다. 두 가지 이유:
  *  - 등록 장수가 다르면 신원마다 근방 밀도가 달라 같은 컷이 한쪽엔 과승인, 한쪽엔 과기각이 된다.
  *  - 1위와 2위가 붙어 있으면 임계값을 넘겨도 그 매칭은 무의미하다.
- * 그래서 점수는 centroid(등록 노이즈 상쇄)와 갤러리 최대값(다형성 대응)의 평균으로 내고,
+ * 얼굴과 캐릭터는 centroid(등록 노이즈 상쇄)와 갤러리 최대값(다형성 대응)의 평균으로 낸다.
+ * 한 이름 아래 서로 다른 의상이 들어갈 수 있는 의상은 최대값을 쓴다. 모든 과제에
  * 1위−2위 마진을 함께 요구한다.
  */
 
@@ -33,16 +34,20 @@ export interface MatchResult {
 }
 
 /**
- * 신원 하나에 대한 점수. centroid 유사도와 개별 등록 이미지 최대 유사도의 평균.
- * 등록이 1장이면 두 값이 같으므로 그대로 그 값이 된다.
+ * 얼굴·캐릭터의 hybrid는 centroid와 가장 가까운 등록 이미지의 평균이다.
+ * max는 서로 다른 의상이 같은 이름 아래 있을 때 중심점이 실제 어느 의상과도
+ * 닮지 않는 문제를 피한다. 등록이 한 장이면 두 방식의 점수는 같다.
  */
-function scoreEntry(query: Float32Array, entry: GalleryEntry): number {
-  const centroidSim = cosineSimilarity(query, entry.centroid);
+export type ScoreMode = "hybrid" | "max";
+
+function scoreEntry(query: Float32Array, entry: GalleryEntry, mode: ScoreMode): number {
   let maxSim = -1;
   for (const v of entry.vectors) {
     const s = cosineSimilarity(query, v);
     if (s > maxSim) maxSim = s;
   }
+  if (mode === "max") return maxSim;
+  const centroidSim = cosineSimilarity(query, entry.centroid);
   return (centroidSim + maxSim) / 2;
 }
 
@@ -56,13 +61,14 @@ export function matchGallery(
   threshold: number,
   minMargin: number,
   label?: string,
+  scoreMode: ScoreMode = "hybrid",
 ): MatchResult | null {
   if (gallery.length === 0) return null;
 
   let best = { name: "", score: -1 };
   let second = -1;
   for (const entry of gallery) {
-    const s = scoreEntry(query, entry);
+    const s = scoreEntry(query, entry, scoreMode);
     if (s > best.score) {
       second = best.score;
       best = { name: entry.name, score: s };

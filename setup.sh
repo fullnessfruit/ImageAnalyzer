@@ -13,7 +13,7 @@ npm install
 echo "Creating directories..."
 mkdir -p data/faces data/characters data/costumes models db
 
-echo "Downloading ONNX models (about 890 MB on first run)..."
+echo "Downloading ONNX models (about 815 MiB on first run)..."
 npx ts-node -e "require('./server/src/model-downloader').ensureModelsDownloaded('./models').then(() => console.log('Model download complete.'))"
 
 echo "Initializing database..."

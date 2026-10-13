@@ -3,13 +3,14 @@
 Local API server for image analysis. Accepts an image and answers four questions, designed to be
 called from a Chrome extension:
 
-1. **OCR list matching** - does the image contain any of the strings in `searchStrings.tsv`?
+1. **OCR list matching** - does the image contain a string from the request's search list (`searchStrings.tsv` for manual runs)?
 2. **Real-person face** - is a registered person's face present?
 3. **Anime character** - which character is this?
 4. **Anime costume** - is a registered costume being worn?
 
-It does not extract full text, describe scenes, identify silhouettes, or do real-person full-body
-re-identification. Those are out of scope by design.
+It does not extract full text, describe scenes, or identify silhouettes. The current build identifies
+real people from faces only; it cannot assign an identity to a body-only or rear-view image.
+See [BodyIdentityResearch.md](BodyIdentityResearch.md) for tested body ReID methods, results, and the data needed to revisit that limitation.
 
 ## How it works
 
@@ -28,15 +29,18 @@ lands far away while different characters with similar attributes land close.
 | Task | Model | Registration needed |
 |---|---|---|
 | Real-person face | SCRFD landmarks → 5-point similarity warp → ArcFace w600k_r50 (flip TTA) | 1–3 photos per person |
-| Anime character | CCIP (gallery), corroborated by WD-Tagger v3 | 1–2 images per character |
+| Anime character | CCIP (gallery), WD-Tagger v3 review fallback | 1–2 images per character |
 | Anime costume | WD-Tagger clothing tags, IDF-weighted, head masked | 1 image per costume |
 
 **Only registered characters are reported.** CCIP carries identity: it is trained with the same
 character across different artists and styles as positives, so a single registered image matches the
 character in a different outfit and a different rendering (measured: 0.85 and 0.87 from one reference).
-WD-Tagger is a corroborating signal only - its vocabulary is a fixed ~2,751 characters and it does not
+WD-Tagger is a review fallback only - its vocabulary is a fixed ~2,751 characters and it does not
 know newer ones at all (a recent franchise's entire twelve-character cast can be absent from it), so
 any name it emits is filtered against the gallery.
+CCIP matches are definitive `characters` results. A gallery name suggested only by WD-Tagger goes to
+`charactersWeak` for review, because tagger probabilities can be high even on another character in an
+overlapping crop.
 
 ArcFace is trained only on faces warped to a canonical 5-point template, so landmark alignment is
 mandatory - feeding a raw bounding-box crop puts every input out of distribution.
@@ -55,6 +59,7 @@ ImageAnalyzer/
 │   └── costumes/<costume-name>/     # images for costume registration
 ├── models/                          # ONNX models (auto-downloaded)
 ├── db/embeddings.db                 # SQLite gallery
+├── log/                             # local analysis request/result logs
 ├── server/src/                      # analysis server
 ├── scripts/                         # registration + diagnostic CLIs
 ├── config.json                      # thresholds, margins, aliases
@@ -71,7 +76,7 @@ npm run register:all
 npm run server
 ```
 
-Models (~890 MB) download automatically on first run.
+Models (~815 MiB) download automatically on first run.
 
 ### OCR only
 
@@ -80,8 +85,8 @@ npm run server:ocr
 ```
 
 Runs the server with the vision models (face / arcface / anime detectors / ccip / wd-tagger,
-~772 MB) neither downloaded nor loaded - only the OCR models (~108 MB) are used. `faces`,
-`facesWeak`, `characters` and `costumes` always come back empty; `ocr` is unaffected. Use it
+~772 MiB) neither downloaded nor loaded - only the OCR models (~43 MiB) are used. `faces`,
+`facesWeak`, `characters`, `charactersWeak` and `costumes` always come back empty; `ocr` is unaffected. Use it
 when the caller only asks "does this image contain one of these strings?" or when the host is
 too small for the full model set. `IMAGEANALYZER_OCR_ONLY=1` does the same, and `GET /health`
 reports `ocrOnly`.
@@ -100,6 +105,22 @@ same as above, and it never opens the gallery DB.
 It calls out to `OCR_BROKER_URL` and signs every request with `OCR_BROKER_SECRET`, so unlike
 the server mode there is nothing to bind and no port to open here. `server-ocr.bat` also arms
 the low-battery shutdown (25% while discharging) - see the comments in that file.
+
+### Analysis logs
+
+Worker, HTTP, and local CLI analyses are saved in `log/analysis-log_YYYY-MM-DDTHH-MM-SSZ_<pid>.log`.
+Both the filename time and each line's leading `[YYYY-MM-DDTHH:mm:ss.sssZ]` time are UTC, matching
+the timestamp convention in AnnouncementAggregator's logs. Each line then contains one JSON object.
+A worker writes each image URL, post URL, job ID, and the complete TSV search list **before**
+downloading it. The matching result, per-part OCR scores, download or OCR failure, and broker
+delivery status are recorded separately with the same `attemptId`. HTTP uploads record the effective
+search list, optional caller-provided `imageUrl`, uploaded filename, image SHA-256, configuration,
+and the full OCR/face/character/costume result. CLI runs record the local `file:` URL and full result
+with `mode: "cli"`, keeping manual tests distinguishable from worker operations. Without an HTTP
+`imageUrl`, the server cannot recover the original URL from uploaded bytes. This field is metadata
+only and is not fetched or verified. Image bytes are not kept.
+The log files are ignored by Git and are not deleted automatically. For example, search them with
+`rg '"imageUrl":"https://pbs.twimg.com/' log/`.
 
 ### API
 
@@ -125,6 +146,7 @@ curl -X POST http://localhost:3000/analyze -F "image=@test.jpg"
   "faces":      [{ "name": "person-a", "score": 0.7854, "margin": 0.7854, "box": [x, y, w, h] }],
   "facesWeak":  [{ "name": "person-a", "score": 0.3221, "margin": 0.3221, "box": [x, y, w, h] }],
   "characters": [{ "name": "character-a", "score": 0.8731, "margin": 0.8731, "source": "ccip" }],
+  "charactersWeak": [{ "name": "character-b", "score": 0.8612, "margin": 0, "source": "tagger" }],
   "costumes":   [{ "name": "costume-a", "score": 1.0, "margin": 1.0, "source": "blazer,skirt,..." }],
   "_detections": { "realFaces": 2, "animeFaces": 2, "animePersons": 2, "textRegions": 19 },
   "_elapsedMs": 30607
@@ -139,7 +161,7 @@ curl -X POST http://localhost:3000/analyze -F "image=@test.jpg"
 
 ```json
 {
-  "similarityThreshold": { "face": 0.45, "faceWeak": 0.28, "character": 0.82, "costume": 0.55 },
+  "similarityThreshold": { "face": 0.45, "faceWeak": 0.28, "character": 0.82, "costume": 0.52 },
   "margin":              { "face": 0.06, "character": 0.04, "costume": 0.05 },
   "ocr":                 { "scoreThreshold": 0.5, "detScales": [960, 1600] },
   "wdTagger":            { "characterTagThreshold": 0.6 },
@@ -159,7 +181,7 @@ scores 0.1474 and is not reported at all.
 | Band | Range | Meaning |
 |---|---|---|
 | `faces` | ≥ `face` (0.45) | accepted as the real subject |
-| `facesWeak` | `faceWeak` … `face` | photographed photo or degraded capture - do not act on automatically |
+| `facesWeak` | `faceWeak` … `face` | uncertain capture or pose - do not act on automatically |
 | - | < `faceWeak` (0.28) | not reported |
 
 A match must clear both the absolute threshold and the **top-1 minus top-2 margin**. If top-1 and
@@ -202,9 +224,9 @@ the only possible undo is deleting every auto entry blindly. Reviewing costs alm
 because there is no training; registering is embedding extraction into SQLite.
 
 Unmatched crops are not collected. The purpose is to broaden coverage of identities you already
-registered, and for faces only the `faces` band is collected - a photographed photo must not end up
-in the gallery. For characters the most valuable candidate is one WD-Tagger confirms but CCIP misses,
-since that is exactly a rendering CCIP does not yet cover.
+registered. For faces only the `faces` band is collected - a photographed photo must not end up
+in the gallery. For characters only CCIP-confirmed crops are collected; tagger-only guesses can be
+wrong even at very high probability and remain in `charactersWeak`.
 
 Runaway collection is bounded by `dedupThreshold` (skip anything within 0.95 cosine of an existing
 candidate - the embedding is already computed, so this is free) and `maxPerName`.

@@ -17,7 +17,7 @@ if not exist "data\costumes" mkdir "data\costumes"
 if not exist "models" mkdir "models"
 if not exist "db" mkdir "db"
 
-echo Downloading ONNX models (about 890 MB on first run)...
+echo Downloading ONNX models (about 815 MiB on first run)...
 call npx ts-node -e "require('./server/src/model-downloader').ensureModelsDownloaded('./models').then(() => console.log('Model download complete.'));"
 if errorlevel 1 goto :error
 
