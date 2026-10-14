@@ -18,6 +18,7 @@ import * as ort from "onnxruntime-node";
 import sharp from "sharp";
 import fs from "fs";
 import { getModelPath } from "./model-downloader";
+import { loadV5Session } from "./ocr-model-cache";
 
 // ============================================================
 // 상태
@@ -74,7 +75,9 @@ export async function initOCR(modelsDir: string): Promise<void> {
       continue;
     }
 
-    const session = await ort.InferenceSession.create(recPath, { intraOpNumThreads: 4 });
+    const session = kind === "v5"
+      ? await loadV5Session(recPath)
+      : await ort.InferenceSession.create(recPath, { intraOpNumThreads: 4 });
     // PaddleOCR은 use_space_char=True로 내보내면 사전 끝에 공백이 붙는다.
     // 클래스 수 = 사전 + 공백 + blank 이므로 공백을 명시적으로 추가해야 인덱스가 어긋나지 않는다.
     const chars = fs
