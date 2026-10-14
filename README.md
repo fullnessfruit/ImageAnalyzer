@@ -73,10 +73,19 @@ Folder name = the name reported by the analyzer. Faces do not need cropping - de
 ```bash
 npm install
 npm run register:all
-npm run server
+npm run server           # manual HTTP API; the extension uses the broker worker
 ```
 
 Models (~815 MiB) download automatically on first run.
+`server.bat` starts the full broker worker (OCR, faces, characters and costumes); `server_local.bat` selects the local broker at 127.0.0.1:3100. Use `server-ocr.bat` / `server-ocr_local.bat` for OCR only. All workers use the same broker and `OCR_BROKER_SECRET` as VoiceAnalyzer, and open no incoming port. The extension sends its shared target-name list; names exactly match registered data folders. Run the existing registration commands after adding reference images. The manual HTTP API remains available via `npm run server`.
+
+### Labeled OCR samples
+
+`sample/keyword-present/<keyword>/` contains images where the keyword is visibly present;
+`sample/keyword-absent/<keyword>/` contains images where it is absent. These names describe
+ground truth, not what the OCR happened to report. Run `npm run ocr:samples` to check the
+local images with the real OCR models. `sample/` is ignored by Git, so this check requires
+the local sample images.
 
 ### OCR only
 
@@ -245,3 +254,12 @@ regression checks.
 ## Resetting
 
 Delete `db/embeddings.db` and re-run `npm run register:all`.
+
+
+### Named image jobs
+
+`npm run worker -- --all` alternates OCR and image claims. Plain `npm run worker`, `--ocr-only`, or `IMAGEANALYZER_OCR_ONLY=1` consumes only OCR. Image jobs match only requested registered folder names; unknown names are reported in `skippedNames` and weak candidates never trigger an alert. Empty target lists do not run vision inference. The extension handles delivery and deduplication.
+
+Image/voice jobs share the OCR broker port. Additional jobs expire after one hour on queue I/O (no periodic cleanup timer); OCR retains its 24-hour lifetime. Stopped/OCR-only analyzers do not automatically switch mode or call OpenAI for these jobs.
+
+확장이 보내는 OCR `blocks`에는 키워드별 제외어도 포함된다. 각 이미지에서 제외어가 검출되면 그 키워드만 비매칭 처리하며 다른 키워드와 다른 이미지의 유효 매칭은 유지한다. 제외 사유와 점수는 `log/`의 이미지 결과에 기록된다. 이 프로토콜 변경은 확장·공통 브로커·ImageAnalyzer를 함께 갱신해 적용한다.

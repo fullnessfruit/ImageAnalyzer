@@ -1,7 +1,7 @@
 @echo off
 REM Start the OCR worker: pull jobs from the broker, analyze, post results back.
 REM
-REM THIS IS THE ONLY SCRIPT TO RUN ON THIS MACHINE.
+REM This launcher handles broker OCR jobs. Use server.bat for full broker image analysis.
 REM
 REM The name is inherited from the script this replaced, which started the HTTP analysis
 REM server in OCR-only mode. Nothing calls that server any more - the extension reaches OCR
