@@ -82,9 +82,10 @@
 
 `toClassIdSets()`로 검색어의 **모든 위치**를 표현할 수 있는 모델만 고른다. `大西亜玖璃`는
 `v5`와 `ja`로 인식하고, 일반적인 한글 검색어는 `ko`만 인식한다. 라틴 문자처럼 세 모델이
-모두 표현 가능한 검색어는 세 격자를 채점해 최고 점수를 취한다. v5 사전에도 한글 2자가 있으므로 실제
+모두 표현 가능한 검색어는 세 격자를 채점해 최고 원점수를 취한다. 다만 2~4글자 가나는 같은
+위치에서 더 강한 한 글자 차이 읽기가 확인되면 그 고득점 후보를 기각한다. v5 사전에도 한글 2자가 있으므로 실제
 선택은 문자 범주가 아니라 이 함수의 커버리지 검사로 정해진다. 검색어가 여럿이어도 **모델을
-검색어마다 다시 실행하지 않는다.** 모델마다 모든 스트립을 폭이 비슷한 것끼리 최대 8개씩
+검색어마다 다시 실행하지 않는다.** 모델마다 모든 스트립을 폭이 비슷한 것끼리 최대 4개씩
 배치 인식하고, 각 검색어가 계산된 격자를 공유한다. 스트립이 많으면 모델당 ONNX 호출은 여러 번이다.
 
 표현 불가능한 모델의 점수는 0으로 확정되므로 인식을 건너뛴다. 모델을 추가할 때는 `RecKind`,
@@ -250,7 +251,7 @@ CLI는 OCR뿐 아니라 `faces`·`facesWeak`·`characters`·`charactersWeak`·`c
 
 **워커 모드 (`npm run worker` / `server-ocr.bat`)**: HTTP 서버 대신 브로커를 당겨 일한다. 호출자인 크롬 확장은 공인 주소를 가진 매우 사양이 낮은 머신에서 돌고 이 프로그램은 집 노트북(NAT 안)에서 도는데, 확장이 노트북을 호출할 수 없으므로 방향을 뒤집은 것이다. 서버 모드는 그대로 남아 있고 같은 기계에서 부를 수 있을 때 쓴다. 상세는 `server/src/worker.ts`.
 
-**이 머신에는 `server-ocr.bat` 하나만 띄우면 된다.** 예전의 `server-ocr.bat`(HTTP 분석 서버 OCR 모드)은 부르는 데가 없어져서 삭제하고, 워커 스크립트가 그 이름을 물려받았다 - 익숙한 이름 하나로 합친 것이다. `server-ocr_local.bat`은 같은 워커를 이 머신에서 띄운 브로커(`127.0.0.1:3100`)에 붙이는 로컬 테스트용 사본이다. `server-ocr_shutdown.bat`은 스크립트 안의 `SHUTDOWN_AFTER_SEC`(초) 뒤에 PC를 끄는 런처로, `shutdown /s /t N`을 먼저 Windows에 등록한 뒤 `server-ocr.bat`을 호출한다(헤더와 env 기본값을 복제하지 않기 위해). 스크립트가 세는 것이 아니라 OS에 등록하므로 창을 닫아도 타이머는 남고, `shutdown /a`로 취소한다. 이미 예약이 있으면 등록에 실패하므로 워커를 띄우지 않고 종료한다. `npm run server:ocr`은 README의 수동 curl API용으로 남아 있으나 전용 런처는 없다. 워커는 그 서버와 통신하지 않는다: `performOCR`을 같은 프로세스에서 직접 부르고 밖으로는 브로커하고만 말한다. 크롬 확장 쪽도 HTTP 분석 서버를 호출하지 않는다 (`ocr-text-protocol.js`에 남은 것은 `blocksToTsv` / `splitFoundLines` / `matchedKeyword` 세 개의 순수 헬퍼뿐이며, 이름도 그래서 바뀌었다).
+**Windows 실행**: `server.bat`은 공통 브로커에서 OCR·image 작업을 받는 전체 워커(`npm run worker -- --all`)다. `server_local.bat`은 동일 워커를 127.0.0.1:3100에 연결한다. `server-ocr.bat`과 `server-ocr_local.bat`은 OCR 작업만 받으며 이미지 인물 분석을 하지 않는다. 전체 워커도 수신 포트를 열지 않는다. 수동 직접 호출 API는 `npm run server`/`npm run server:ocr`로 실행한다. `_shutdown.bat` 런처는 기존대로 OS 종료를 예약한 뒤 대응 런처를 부른다.
 
 **OCR 전용 기동**: `--ocr-only` 인자 또는 `IMAGEANALYZER_OCR_ONLY=1`. 비전 모델 6개(총 약 772MiB)를 **다운로드도 로드도 하지 않는다.** OCR 모델 4개(det, rec-v5, rec-ja, rec-ko)와 사전만 쓰며 파일 합계는 약 43MiB다. 탐지 함수들이 세션 null을 빈 배열로 처리하도록 되어 있어 `analyzeImage`는 그대로 통과하고 `faces`/`facesWeak`/`characters`/`charactersWeak`/`costumes`만 빈 배열이 된다. `GET /health`가 `ocrOnly`로 모드를 보고하고, `npm run server:ocr`로 기동한다 (전용 .bat 없음 - 그 이름은 이제 워커 런처다).
 
@@ -329,10 +330,14 @@ ImageAnalyzer 음성의 **불일치**이지 정답 자료가 아니므로 이미
 1행은 `大西亜玖璃`가 있으면 매칭. 2행은 두 문자열이 모두 있어야 매칭.
 
 ### server/src/ocr.ts
-**역할**: 검색 목록 매칭. 세션은 `detSession`과 `recModels`(Map: `v5`/`ja`/`ko` → 세션+문자인덱스+전처리 채널 순서).
-전문(全文) 추출 경로는 없다. 격자에서 검색어 점수만 뽑고 디코딩된 문자열은 만들지 않는다.
+**역할**: 검색 목록 매칭. 세션은 `detSession`과 `recModels`(Map: `v5`/`ja`/`ko` → 세션+양방향 문자인덱스+전처리 채널 순서).
+전문(全文)을 결과로 만들지 않고 격자에서 검색어를 채점한다. 짧은 가나 검색어가 이미 임계값을 넘었을 때만, 오독의 반증 후보를 얻기 위해 해당 스트립의 greedy 읽기를 임시로 만든다.
 
-- `parseSearchLists()`: TSV를 `SearchList[]`로. 탭 파트 분해.
+- `initOCR()`: det·v5·ja·ko 모델을 연다. v5만 `ocr-model-cache.ts`에서 준비한 정리 사본을 기본 경고 설정으로 로드한다.
+- `parseSearchLists()`: 수동 입력 TSV를 `SearchList[]`로. 탭 파트 분해.
+- `parseKeywordBlocks()`: 브로커 `blocks`의 `{keyword, content, exclusions}`를 키워드별 검색 목록으로 바꾼다. 긍정 토큰이 같아도 키워드 식별자와 제외 설정이 다른 목록은 합치지 않는다.
+- `evaluateSearchLists()`: 한 이미지에서 긍정 토큰 전부가 임계값 이상이고 제외어는 하나도 임계값 이상이 아닐 때만 매칭한다. 제외어는 쪼개지 않고 같은 CTC 격자·표기 대체 규칙으로 채점한다. 점수는 문자열별로 재사용하며 다른 키워드의 매칭을 취소하지 않는다. `found`는 TSV 원문, `matchedKeywords`는 호출자의 키워드 식별자, `detail`은 긍정·제외어 점수와 `excludedBy`를 담는다.
+- `performOCR()`: 긍정 토큰과 제외어 모두를 표현할 수 있는 인식 모델을 고르고 같은 검출·인식 결과에서 채점한다. 이미지별 판정이므로 한 이미지에서 제외돼도 다른 이미지의 유효 매칭은 남는다.
 - `detectAtScale()`: DBNet 확률맵(`sigmoid_0.tmp_0`이라 이미 확률) 이진화 → 연결 컴포넌트 →
   바운딩 박스. **언클립은 등방 오프셋** `area×ratio/perimeter`로 계산한다. 박스 크기에 비례해
   늘리면 가로로만 과확장되어 옆 글자를 삼킨다. 박스 점수는 bbox 영역 확률 평균(PaddleOCR
@@ -354,7 +359,18 @@ ImageAnalyzer 음성의 **불일치**이지 정답 자료가 아니므로 이미
 - `ctcKeywordScore()`: 핵심. 표준 CTC forced alignment는 격자 전체가 정확히 검색어여야 해서
   `제1화 大西亜玖璃 출연` 같은 줄에서 부분 매칭을 못 한다. 그래서 상태 0을 "아직 시작 안 함"으로
   두고 항상 확률 1로 유지해 앞쪽 임의 문자열을 허용하고, 마지막 글자 도달 시점의 최대값을 취해
-  뒤쪽도 허용한다. 반환값은 **문자당 기하평균 확률** `P^(1/L)` - 길이가 다른 검색어끼리 비교 가능해진다.
+  뒤쪽도 허용한다. 문자당 기하평균 확률 `P^(1/L)`과 최고 점수의 종료 시점을 반환한다. 종료 시점은
+  같은 긴 줄의 다른 위치에 있는 대체 단어가 현재 검색어를 잘못 기각하지 않도록 쓰인다.
+- `isShortKana()` / `foldKana()` / `greedyRead()` / `oneCharRivals()`: 2~4글자 가나 검색어가
+  임계값을 넘었을 때만 같은 스트립에서 한 글자 다른 관측 읽기를 찾는다. greedy 결과는
+  **양성 판정에 쓰지 않고** 경쟁 후보 제안에만 쓴다. 후보도 원래와 같은 CTC 격자로 점수화한다.
+  같은 모델의 같은 위치에서 후보가 더 강하면 검색어를 기각한다. 일본어 모델 `ja`의 양성은
+  `v5`가 같은 위치의 후보를 자기 모델의 검색어보다 2배 이상 강하게 지지해도 기각한다.
+  역방향은 적용하지 않는다. 실제 `ひかりめぐり`를 `ja`가 `ひかりあぐり`로 오독한 이미지에서
+  역방향까지 적용하면 올바른 `v5`의 `めぐり` 검출도 사라졌기 때문이다. 모든 스트립의
+  고득점 후보를 검사하므로 한 후보가 기각돼도 다른 위치의 확실한 매칭은 남는다.
+  전부 기각되면 결과 점수는 0으로 내리고, 로그 한 줄에 원래 후보 점수·대체 읽기·해당 모델의
+  양쪽 점수를 남긴다.
 - `alternativesFor()` / `CONFUSION_GROUPS`: 한 위치에서 받아들일 문자 집합. 표기 흔들림
   (가나 종류, 전각/반각, 대소문자)과 OCR 상습 혼동(`ヶ`↔`久`, `亜`↔`亚`, `ロ`↔`口`, `エ`↔`工` 등)을
   모두 흡수한다. 문자열 변형을 조합으로 늘리지 않고 **격자 스코어링에서 위치별 대체 문자의
@@ -363,6 +379,22 @@ ImageAnalyzer 음성의 **불일치**이지 정답 자료가 아니므로 이미
 
 **주의**: PaddleOCR rec ONNX는 추론 모드에서 softmax가 이미 적용되어 나온다. 확률에 softmax를
 다시 걸면 값이 1/C 규모로 무너진다.
+
+`sample/keyword-present/<검색어>/`와 `sample/keyword-absent/<검색어>/`는 모델 판정이 아니라
+눈으로 확인한 **실제 포함 여부**를 담는다. `scripts/ocr-samples.cjs`가 현재 모델과 설정으로
+각 이미지를 다시 분석하고, 음성 이미지에 실제로 있는 `アクリル`·`めぐり`도 별도로 확인한다.
+`sample/`은 Git에서 제외되므로 이 검사는 샘플이 있는 로컬 작업 공간에서 실행한다.
+`あぐり` 양성 실사진이 없어 그 검색어의 재현율을 입증하지는 않는다. 별도로 눈으로 확인한
+[공식 상품 이미지](https://columbia.jp/onishiaguri/images/goods_2306-05.jpg)의 장식적
+`あぐりんぐ` 글씨는 현재 모델에서 `あぐり` 점수 0.159로 검출되지 않았다. 같은 이미지에
+실제 `アクリル`도 있어서 그 단어가 이미지 어딘가에 있다는 이유만으로 `あぐり`를 전역
+제외하면 참양성까지 버린다. 반증은 반드시 같은 텍스트 스트립의 가까운 위치에서 한다.
+
+### server/src/ocr-model-cache.ts
+**역할**: v5 ONNX에 남은 미사용 `p2o` initializer 경고를 원본 모델을 바꾸지 않고 제거한다.
+`prunedModelPath()`는 원본 바이트·ONNX Runtime 버전·플랫폼·아키텍처의 해시로 `models/` 안의 파생 사본 이름을 정한다. 원본이나 런타임이 바뀌면 사본을 다시 만든다.
+`preparePrunedModel()`은 첫 로딩 때만 ONNX Runtime의 `optimizedModelFilePath`로 정리 사본을 만든다. 그래프 최적화는 꺼서 미사용 initializer 제거 외의 재작성은 피하고, 이 임시 세션의 반복 경고만 `logSeverityLevel: 3`으로 숨긴다. 임시 파일을 완성한 뒤 이름을 바꿔 게시하며 중복 워커의 동시 생성을 허용한다. 이미 있으면 재사용한다.
+`loadV5Session()`은 정리 사본을 **기본 경고 설정**으로 로드한다. 정리나 캐시 로딩에 실패하면 한 줄로 원인을 남기고 원본을 오류 이상 로깅으로 열어 OCR을 계속 사용한다. 검증 입력 `[1,3,48,320]`에서 원본과 사본의 출력 735,400개가 전부 일치했다. 사본은 Git에서 제외되고 원본 ONNX는 보존된다.
 
 ### server/src/inference.ts
 **역할**: 모든 ONNX 추론. 세션은 모듈 레벨 싱글톤.
@@ -483,9 +515,18 @@ CLI도 실패를 보고한다.
 `POST /analyze`는 추론 전에 유효 검색 목록·출처·이미지 해시·선택적 `imageUrl`을 파일에
 기록하고, 성공하면 OCR·얼굴·캐릭터·의상 전체 결과, 실패하면 오류를 같은 `requestId`로 기록한다.
 
+### server.bat / server_local.bat
+**역할**: 전체 OCR·이미지 브로커 워커 실행. `server.bat`은 작업 디렉터리를 고정하고 OCR_ONLY=0, `--all`로 전체 모드를 명시한다. 기존 환경의 브로커 주소·배터리 임계값은 보존하며 없을 때만 EC2 주소와 25%를 지정한다. `server_local.bat`은 `setlocal` 안에서 127.0.0.1:3100을 지정하고 같은 런처를 부른다. 추가 포트를 열지 않는다.
+
+### server_shutdown.bat
+**역할**: 전체 분석 워커를 실행하면서 Windows에 정해진 시간 뒤의 PC 종료를 등록한다.
+`server-ocr_shutdown.bat`과 같은 방식으로 먼저 `shutdown /s /t N`을 실행하고 성공한
+경우에만 `server.bat`을 호출한다. 예약은 워커가 종료되거나 창이 닫혀도 유지되며
+`shutdown /a`로 취소한다. 이미 종료 예약이 있거나 예약에 실패하면 워커를 켜지 않는다.
+
 ### server/src/worker.ts
 **역할**: 브로커 폴링 워커. NAT 안쪽에서 도는 실행 모드이며 HTTP 서버를 열지 않는다.
-`runJob()`은 각 URL을 처리하기 전에 job의 원본 TSV와 URL을 파일에 남긴다. URL 거부·
+`runJob()`은 각 URL을 처리하기 전에 job의 원본 TSV·키워드별 제외어·URL을 파일에 남긴다. 이미지별 제외 판정은 `detail[].excludedBy`에 기록하고 유효한 `matchedKeywords`를 합친다. 브로커에는 키워드 식별자와 `{imageUrl, keyword, terms}` 제외 근거도 올린다. URL 거부·
 다운로드 실패·OCR 실패·성공을 같은 `attemptId`와 `imageIndex`의 결과 행으로 기록한다.
 `tick()`은 이미지 결과를 합산해 브로커에 올릴 내용과 업로드 성공·중복 완료·실패도 기록한다.
 과거의 콘솔 출력이나 확장 `background-log_*.txt`에는 이미지 URL과 전체 검색 목록이 한
@@ -495,11 +536,9 @@ CLI도 실패를 보고한다.
 NAT가 막는 건 *확장 → 노트북* 한 방향이라, 노트북이 브로커
 (`AnnouncementAggregator/ocr-broker`)를 당겨 작업을 가져가고 결과를 올린다.
 
-**OCR만 쓴다.** 확장이 묻는 것이 "이 이미지에 이 문자열들이 있는가" 하나뿐이라 `performOCR`을
-직접 부른다. 비전 모델 6개(약 772MB)는 받지도 로드하지도 않고 **DB도 열지 않는다** - OCR
-경로는 갤러리를 전혀 참조하지 않기 때문이다(`ocr.ts`는 `db`를 import하지 않는다).
+**종류별 모드**: 기본/`--ocr-only`/IMAGEANALYZER_OCR_ONLY=1은 OCR만 claim한다. `--all`이 명시되고 OCR 전용 설정이 없을 때만 전체 모드이며 비전 모델·DB도 준비한다. 전체 모드는 OCR과 image를 번갈아 먼저 조회하고 한쪽이 비면 다른 쪽에서 받는다. 오래된 OCR이 이미지의 짧은 TTL을 전부 소모하지 않도록 하고 OCR도 계속 진행시킨다. 음성 작업은 수령하지 않는다.
 
-**이미지는 워커가 직접 받는다.** job에는 이미지 바이트가 아니라 URL이 실려 온다 (확장이 자기 문맥으로 `post`·`blocks`도 같이 싣지만 워커는 읽지 않는다 - 브로커가 결과에 복사하는 용도다). pbs.twimg.com은 공개라 노트북이 자기
+**이미지는 워커가 직접 받는다.** job에는 이미지 바이트 대신 URL과 `blocks`(원본 키워드·토큰·제외어)가 실려 온다. 워커는 blocks로 OCR을 판정하며 `post`는 브로커가 결과에 복사하는 전송 문맥이다. pbs.twimg.com은 공개라 노트북이 자기
 회선으로 받으면 되고, 그래야 확장 쪽 머신의 업로드 대역폭과 브로커 용량을 둘 다 쓰지 않는다.
 
 **검색 리스트는 job이 들고 온 것이 정본이다.** 서버 모드의 multipart `searchStrings`와 같은
@@ -542,14 +581,14 @@ NAT가 막는 건 *확장 → 노트북* 한 방향이라, 노트북이 브로�
 
 무인으로 돌면서 OCR로 CPU를 태우는 프로세스라, 방전으로 그냥 꺼지는 것보다 통제된 종료가 낫다. 절전 기능이 아니라 데이터 보호 장치다.
 
-- `OCR_WORKER_BATTERY_SHUTDOWN_PERCENT` - **코드 기본값은 0(꺼짐)**, `server-ocr.bat`이 25로 켠다. 라이브러리 기본값은 안전한 쪽, 켜는 것은 런처의 책임
+- `OCR_WORKER_BATTERY_SHUTDOWN_PERCENT` - **코드 기본값은 0(꺼짐)**, `server-ocr.bat`과 `server.bat`이 미설정 시 25로 켠다. 라이브러리 기본값은 안전한 쪽, 켜는 것은 런처의 책임
 - **방전 중일 때만 발동한다.** `Win32_Battery.BatteryStatus === 1`(Discharging)만 방전으로 보고, 3(Fully Charged)·4(Low) 같은 애매한 값은 세지 않는다 - 애매할 때 PC를 끄는 것보다 안 끄는 쪽이 안전하다. AC에 꽂혀 있으면 몇 퍼센트든 안 끈다
 - **폴링 틱과 별개의 `setInterval`로 돈다** (`OCR_WORKER_BATTERY_CHECK_MS`, 기본 60초). 틱 경계에서만 보면 job이 밀렸을 때 그 배수만큼 못 보는데 배터리는 그 사이에도 준다
 - **즉시 끄지 않는다.** `shutdown /s /t <유예>` (`OCR_WORKER_BATTERY_GRACE_SEC`, 기본 120초)로 예약해 진행 중인 job이 결과를 올릴 시간을 주고, 그 사이 `shutdown /a`로 취소할 수 있다
 - **한 번 예약하면 다시 걸지 않는다.** 유예 동안 재예약하면 사용자가 `shutdown /a`로 취소해도 다음 확인에서 되살아난다. 단 예약 명령 자체가 실패하면 플래그를 되돌려 재시도한다
 - **기존 예약이 있으면 지우고 건다.** Windows는 예약 종료를 하나만 허용해서, `server-ocr_shutdown.bat`의 시간 예약이 걸려 있으면 `shutdown /s`가 1190으로 실패한다. 그러면 긴 타이머 아래에서 배터리 보호가 무력화되므로 먼저 `shutdown /a`를 부르고(예약이 없어서 실패하면 무시) 예약한다. 배터리 쪽이 더 급하므로 대체가 맞다
 - 배터리를 **못 읽으면 끄지 않는다**. Windows가 아니거나(`process.platform !== 'win32'`), 배터리가 없는 데스크톱이거나, 조회가 실패하면 전부 "판단 보류"로 넘어간다
-- 조회는 `WMIC`이 아니라 PowerShell CIM(`Get-CimInstance Win32_Battery`)으로 한다 - WMIC은 폐기 예정이고 최신 Windows 빌드에는 없다
+- 조회는 `WMIC`이 아니라 PowerShell 7 pwsh CIM(`Get-CimInstance Win32_Battery`)으로 한다 - WMIC은 폐기 예정이고 최신 Windows 빌드에는 없다
 
 `isAllowedImageUrl()` / `ALLOWED_IMAGE_HOSTS` - **받아올 수 있는 출처를 `https://pbs.twimg.com`으로
 제한한다.** 이 워커는 NAT 안쪽에 있으면서 job이 시키는 대로 URL을 받아오므로, job을 넣을 수 있는
@@ -595,6 +634,13 @@ job에 나올 수 없으므로 경고로 남긴다.
 이미지별 `file:` URL·해시·실제 검색 목록·설정을 분석 전에, 전체 결과나 실패를 분석 뒤에
 HTTP와 같은 로그 함수로 남긴다. `mode: "cli"`로 운용 워커 기록과 구분한다.
 
+### scripts/ocr-samples.cjs
+**역할**: `npm run ocr:samples`로 로컬 OCR 정답 샘플을 실제 ONNX 모델로 회귀 확인한다.
+검색어는 두 정답 폴더의 하위 디렉터리 이름이며, `keyword-present`는 있어야 하고
+`keyword-absent`는 없어야 한다. 각 이미지의 점수와 성공 여부를 한 줄씩 출력하고
+실패가 있으면 종료 코드 1을 반환한다. 알려진 음성 이미지 속 실제 `アクリル`·`めぐり`
+양성도 함께 확인해, 오검출 차단이 올바른 단어까지 지우는 일을 막는다.
+
 ### scripts/tags.ts
 **역할**: WD-Tagger 원시 확률 덤프(rating/character/general 상위 20). 캐릭터 임계값 조정,
 의상 태그 확인, 태거가 무엇을 보고 있는지 진단.
@@ -635,3 +681,14 @@ bat/sh는 공유 키 보존과 `delete-shared-secret.bat` / `.sh`의 위치, 삭
 
 ### delete-shared-secret.bat / delete-shared-secret.sh
 **역할**: 프로그램 대신 공유 키만 지우는 명시적 실행 도구. `scripts/shared-secret.cjs delete`를 호출하며 실제 분석은 시작하지 않는다. Node 표준 라이브러리만 사용하므로 `node_modules`가 제거된 뒤에도 실행할 수 있다. 실행 중 프로세스와 터미널의 기존 환경은 유지되므로 재설정 뒤 재시작해야 한다.
+
+
+### server/src/named-analysis.ts / runVisionJob
+
+확장의 공통 `names`는 토큰이나 별칭이 아니라 `data/faces/<이름>`, `data/characters/<이름>`, `data/costumes/<이름>`의 폴더 이름이다. 샘플 이미지는 기존 등록 명령으로 갤러리에 등록한다. `availableNames`는 실제 존재하는 폴더와 갤러리 이름의 교집합에서 요청 이름만 고른다. 요청 이름 중 등록되지 않은 것은 `skippedNames`에 담으며 전부 없으면 다운로드·추론을 하지 않는다.
+
+`analyzeNamedImage`는 기존 `analyzeImage`를 빈 OCR 검색 목록으로 호출하여 인물 분석만 수행한다. OCR은 독립 job이 유일하게 담당한다. 전체 갤러리 경쟁자는 confidence margin 계산에 유지하고 확정 `faces`·`characters`·`costumes` 결과 중 요청 이름만 반환한다. weak 후보나 WD 태그의 임의 별칭을 대상 이름으로 보내지 않는다.
+
+`runVisionJob`은 job의 모든 이미지를 받고 이름별 확정 결과를 합친다. 등록된 요청 이름이 없어 분석을 건너뛰는 경우에도 URL마다 요청과 `no_registered_names` 결과를 남긴다. URL 거부·다운로드 실패·분석 실패·성공도 OCR과 같은 `attemptId`·`imageIndex`로 한 줄씩 기록하고, 받은 바이트의 SHA-256을 남긴다. 모든 이미지를 못 받았을 때는 OCR 작업처럼 오류 결과를 올려 재시도 루프를 끝낸다. 브로커 결과는 `found`(확정 이름), `matches`(kind·score·imageUrl 등), `skippedNames`다. image job은 브로커 접수 후 1시간, result는 완료 후 1시간에 입출력 시 만료되며 OCR의 24시간 정책은 그대로다. 워커가 꺼져 있거나 OCR-only여도 추가 모드가 자동 활성화되지 않는다. 브로커·VoiceAnalyzer와 같은 `OCR_BROKER_SECRET`을 사용하며 별도 생존 신호는 없다.
+
+`fetchImageOnce`는 처음 URL과 최대 5회 리다이렉트를 pbs.twimg.com HTTPS·기본 포트·자격증명 없음으로 검사한다. 60초 제한과 스트리밍 32MiB 상한을 적용하고 끝날 때 reader를 닫는다. 허용하지 않는 주소를 HTTP 클라이언트가 먼저 방문하게 하지 않는다. 기존 `fetchImage`의 1회 재시도와 OCR 처리 방식은 유지한다.

@@ -15,12 +15,16 @@ full-body ReID are explicitly out of scope.
 ```bash
 setup.bat                            # First run: deps, dirs, ONNX download (~815 MiB). ./setup.sh on POSIX
 npm run server                       # Start analysis server (port 3000)
+server.bat                           # Windows full-analysis broker worker
+server_local.bat                     # Full worker against the local broker
+server_shutdown.bat                  # Full worker with timed Windows shutdown
 npm run server:ocr                   # HTTP server, OCR only (no vision models). Manual curl API; no .bat launcher
 npm run worker                       # Poll the OCR broker instead of serving HTTP. server-ocr.bat on Windows
 npm run dev                          # Dev mode with auto-reload
 npm run register:all                 # Register face + character + costume galleries
 npm run candidates -- --list         # Review collected crops that are waiting for approval
 npm run analyze -- sample/           # Analyze file/folder without the server (same code path)
+npm run ocr:samples                  # Check labeled OCR presence/absence images
 npm run tags -- sample/image.jpg     # Dump WD-Tagger raw probabilities
 npm run detect -- sample/image.jpg   # Dump detection boxes and face landmarks
 npm run search-strings -- --list     # Manage searchStrings.tsv
@@ -44,10 +48,11 @@ takes `--promote <kind> <name>` and `--clear [kind] [name]`, where kind is `face
 - **OCR is keyword spotting, not reading.** Search strings are scored directly against the CTC
   probability lattice; there is no full-text assembly and no substring comparison. Per-position
   alternative character sets absorb kana/width/case variation and OCR confusions.
-- **Every model that can represent the search string is scored; the max wins.** Script does not pick
+- **Every model that can represent the search string is scored; the highest raw score is considered.** Script does not pick
   the model, because han characters are shared and dictionary coverage is not the same thing as
   training language. Models whose dictionary cannot represent the string are skipped, since their
-  score is provably zero, avoiding unnecessary inference. No language detection on the image.
+  score is provably zero, avoiding unnecessary inference. Short kana hits can be rejected when a
+  stronger one-character rival is observed in the same strip. No language detection on the image.
 - **CLIP is not used.** Its space clusters by art style, not identity.
 - Real faces require 5-point landmark alignment before ArcFace; unaligned crops are out of distribution.
 - **Faces are reported in two bands.** `faces` clears the `face` threshold and is treated as a live

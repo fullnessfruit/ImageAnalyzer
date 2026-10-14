@@ -18,6 +18,7 @@ import * as ort from "onnxruntime-node";
 import sharp from "sharp";
 import fs from "fs";
 import { getModelPath } from "./model-downloader";
+import { loadV5Session } from "./ocr-model-cache";
 
 // ============================================================
 // 상태
@@ -29,6 +30,8 @@ interface RecModel {
   session: ort.InferenceSession;
   /** 문자 → class 인덱스(1-based). class 0은 blank. */
   charIndex: Map<string, number>;
+  /** 확신한 대체 읽기를 확인할 때만 쓰는 class → 문자 역방향 사전. */
+  classChars: string[];
   classCount: number;
   /** 모델별 학습 전처리. v5는 BGR이고 기존 ja/ko는 RGB를 유지한다. */
   channelOrder: "rgb" | "bgr";
@@ -72,7 +75,9 @@ export async function initOCR(modelsDir: string): Promise<void> {
       continue;
     }
 
-    const session = await ort.InferenceSession.create(recPath, { intraOpNumThreads: 4 });
+    const session = kind === "v5"
+      ? await loadV5Session(recPath)
+      : await ort.InferenceSession.create(recPath, { intraOpNumThreads: 4 });
     // PaddleOCR은 use_space_char=True로 내보내면 사전 끝에 공백이 붙는다.
     // 클래스 수 = 사전 + 공백 + blank 이므로 공백을 명시적으로 추가해야 인덱스가 어긋나지 않는다.
     const chars = fs
@@ -85,7 +90,7 @@ export async function initOCR(modelsDir: string): Promise<void> {
     const charIndex = new Map<string, number>();
     for (let i = 0; i < chars.length; i++) if (!charIndex.has(chars[i])) charIndex.set(chars[i], i + 1);
 
-    recModels.set(kind, { session, charIndex, classCount: chars.length + 1, channelOrder });
+    recModels.set(kind, { session, charIndex, classChars: ["", ...chars], classCount: chars.length + 1, channelOrder });
     console.log(`OCR rec loaded - model: ${kind}, covers: ${REC_COVERAGE[kind]}, classes: ${chars.length + 1}`);
   }
 
@@ -101,6 +106,16 @@ export interface SearchList {
   raw: string;
   /** 탭으로 나뉜 파트들. 모두 존재해야 이 리스트가 일치한다. */
   parts: string[];
+  /** Stable caller identity, independent of the token text. */
+  keyword?: string;
+  /** Any matching term disqualifies only this list, within this image. */
+  exclusions?: string[];
+}
+
+export interface KeywordBlock {
+  keyword: string;
+  content: string;
+  exclusions?: string[];
 }
 
 export function parseSearchLists(tsv: string): SearchList[] {
@@ -110,6 +125,15 @@ export function parseSearchLists(tsv: string): SearchList[] {
     .filter((line) => line.trim().length > 0)
     .map((raw) => ({ raw, parts: raw.split("\t").map((p) => p.trim()).filter((p) => p.length > 0) }))
     .filter((l) => l.parts.length > 0);
+}
+
+/** Preserve separate rules even when their positive tokens are identical. */
+export function parseKeywordBlocks(blocks: KeywordBlock[]): SearchList[] {
+  return blocks.flatMap(block => {
+    const lines = parseSearchLists(block.content.split("\n").join("\t"));
+    const exclusions = [...new Set((block.exclusions || []).map(term => term.trim()).filter(Boolean))];
+    return lines.map(list => ({ ...list, keyword: block.keyword, exclusions }));
+  });
 }
 
 /**
@@ -585,11 +609,12 @@ function logAdd(a: number, b: number): number {
  * "아직 시작 안 함"으로 두고 항상 확률 1로 유지해 앞쪽 임의 문자열을 허용하고,
  * 마지막 글자에 도달한 시점의 최대값을 취해 뒤쪽 임의 문자열도 허용한다.
  *
- * 반환값은 문자당 기하평균 확률 P^(1/L)이다. 길이가 다른 검색어끼리 비교 가능해진다.
+ * 문자당 기하평균 확률 P^(1/L)과 최고 점수의 종료 타임스텝을 반환한다.
+ * 전자는 길이가 다른 검색어의 점수를 비교하고, 후자는 가까운 위치의 경쟁 읽기만 대조한다.
  */
-function ctcKeywordScore(lat: Lattice, classIds: number[][]): number {
+function ctcKeywordScore(lat: Lattice, classIds: number[][]): { score: number; endStep: number } {
   const L = classIds.length;
-  if (L === 0) return 0;
+  if (L === 0) return { score: 0, endStep: -1 };
 
   // 확장 시퀀스: [blank, c1, blank, c2, ..., cL, blank]
   // 각 실제 위치는 대체 문자 집합을 갖는다. 대표값(첫 원소)은 blank 전이 규칙 비교에 쓴다.
@@ -607,6 +632,7 @@ function ctcKeywordScore(lat: Lattice, classIds: number[][]): number {
   alpha[0] = 0; // 아직 시작 안 함 = 확률 1
 
   let best = NEG_INF;
+  let endStep = -1;
   const { data, T, C } = lat;
 
   for (let t = 0; t < T; t++) {
@@ -634,12 +660,12 @@ function ctcKeywordScore(lat: Lattice, classIds: number[][]): number {
     next = tmp;
 
     // 마지막 실제 글자에 도달했으면 완성. 뒤에 무엇이 오든 상관없다.
-    if (alpha[S - 2] > best) best = alpha[S - 2];
-    if (alpha[S - 1] > best) best = alpha[S - 1];
+    if (alpha[S - 2] > best) { best = alpha[S - 2]; endStep = t; }
+    if (alpha[S - 1] > best) { best = alpha[S - 1]; endStep = t; }
   }
 
-  if (best === NEG_INF) return 0;
-  return Math.exp(best / L);
+  if (best === NEG_INF) return { score: 0, endStep: -1 };
+  return { score: Math.exp(best / L), endStep };
 }
 
 /**
@@ -662,12 +688,56 @@ function toClassIdSets(text: string, model: RecModel): number[][] | null {
   return sets.length > 0 ? sets : null;
 }
 
+/** 짧은 가나 이름은 한 글자 오독만으로도 높은 CTC 점수가 나므로 대체 읽기와 경쟁시킨다. */
+function isShortKana(text: string): boolean {
+  const length = [...text].length;
+  return length >= 2 && length <= 4 && /^[\u3041-\u3096\u30a1-\u30faー]+$/u.test(text);
+}
+
+function foldKana(ch: string): string {
+  const code = ch.charCodeAt(0);
+  return code >= 0x30a1 && code <= 0x30f6 ? String.fromCharCode(code - 0x60) : ch;
+}
+
+/** Greedy는 긍정 판정에 쓰지 않고, 격자에서 비교할 실제 관측 대체 읽기만 제안한다. */
+function greedyRead(lat: Lattice, model: RecModel): string {
+  const chars: string[] = [];
+  let previous = 0;
+  for (let t = 0; t < lat.T; t++) {
+    let top = 0;
+    let topProb = 0;
+    for (let c = 0; c < lat.C; c++) {
+      const prob = lat.data[t * lat.C + c];
+      if (prob > topProb) { topProb = prob; top = c; }
+    }
+    if (top !== 0 && top !== previous) chars.push(model.classChars[top] ?? "");
+    previous = top;
+  }
+  return chars.join("");
+}
+
+/** 같은 글자 수이면서 가나 표기 통일 후 딱 한 글자만 다른 관측 문자열. */
+function oneCharRivals(target: string, observed: string): string[] {
+  const wanted = [...target].map(foldKana);
+  const actual = [...observed];
+  const rivals = new Set<string>();
+  for (let start = 0; start + wanted.length <= actual.length; start++) {
+    let differences = 0;
+    for (let i = 0; i < wanted.length; i++) {
+      if (foldKana(actual[start + i]) !== wanted[i]) differences++;
+    }
+    if (differences === 1) rivals.add(actual.slice(start, start + wanted.length).join(""));
+  }
+  return [...rivals];
+}
+
 // ============================================================
 // 파이프라인
 // ============================================================
 
 export interface OcrPartScore {
   text: string;
+  /** 강한 경쟁 읽기에 기각되면 원래 격자 점수와 무관하게 0이 된다. */
   score: number;
 }
 
@@ -675,8 +745,30 @@ export interface OcrResult {
   /** 일치한 리스트의 원본 줄. 하나라도 있으면 성공. */
   found: string[];
   /** 리스트별 파트 점수 (임계값 조정용). */
-  detail: { list: string; matched: boolean; parts: OcrPartScore[] }[];
+  detail: { list: string; keyword?: string; matched: boolean; parts: OcrPartScore[]; exclusions: OcrPartScore[]; excludedBy: string[] }[];
+  matchedKeywords: string[];
   regions: number;
+}
+
+/** Apply positive AND / negative OR independently to each keyword in one image. */
+export function evaluateSearchLists(searchLists: SearchList[], scorePart: (part: string) => number, threshold: number) {
+  const scores = new Map<string, number>();
+  const score = (text: string): OcrPartScore => {
+    if (!scores.has(text)) scores.set(text, scorePart(text));
+    return { text, score: scores.get(text)! };
+  };
+  const detail: OcrResult["detail"] = searchLists.map(list => {
+    const parts = list.parts.map(score);
+    const exclusions = (list.exclusions || []).map(score);
+    const excludedBy = exclusions.filter(part => part.score >= threshold).map(part => part.text);
+    const matched = parts.length > 0 && parts.every(part => part.score >= threshold) && excludedBy.length === 0;
+    return { list: list.raw, keyword: list.keyword, matched, parts, exclusions, excludedBy };
+  });
+  return {
+    detail,
+    found: detail.filter(d => d.matched).map(d => d.list),
+    matchedKeywords: detail.filter(d => d.matched && d.keyword).map(d => d.keyword!),
+  };
 }
 
 export async function performOCR(
@@ -684,7 +776,7 @@ export async function performOCR(
   searchLists: SearchList[],
   opts: { scoreThreshold: number; detScales: number[] },
 ): Promise<OcrResult> {
-  const empty: OcrResult = { found: [], detail: [], regions: 0 };
+  const empty: OcrResult = { found: [], matchedKeywords: [], detail: [], regions: 0 };
 
   if (!isOcrReady()) {
     console.log(`[ocr] SKIP - det: ${!!detSession}, rec: ${recModels.size}`);
@@ -708,7 +800,7 @@ export async function performOCR(
   }
 
   // 스트립은 모델과 무관하므로 한 번만 만들어 모든 언어 모델이 공유한다.
-  const shortestKeyword = Math.min(...searchLists.flatMap((l) => l.parts.map((p) => [...p].length)));
+  const shortestKeyword = Math.min(...searchLists.flatMap((l) => [...l.parts, ...(l.exclusions || [])].map((p) => [...p].length)));
   const minStripWidth = Math.max(16, 12 * shortestKeyword);
 
   // 인식이 전체 시간의 대부분이라 최악 케이스에 상한을 둔다. 검출 점수가 높은
@@ -730,7 +822,7 @@ export async function performOCR(
   const setsByKind = new Map<RecKind, Map<string, number[][]>>();
   const unrepresentable = new Set<string>();
   for (const list of searchLists) {
-    for (const part of list.parts) {
+    for (const part of [...list.parts, ...(list.exclusions || [])]) {
       let anyModel = false;
       for (const [kind, model] of recModels) {
         const sets = toClassIdSets(part, model);
@@ -754,36 +846,95 @@ export async function performOCR(
   }
   const recMs = Date.now() - tRec;
 
-  // 파트 하나의 점수 = 표현 가능한 모든 모델 × 모든 격자 × 모든 표기 변형 중 최대값
+  // 파트 하나의 점수 = 표현 가능한 모든 모델 × 모든 격자 × 모든 표기 변형 중 최대값.
+  // 짧은 가나에 한해서 같은 스트립의 한 글자 차이 읽기가 더 강하면 그 후보는 보류한다.
+  const greedyCache = new Map<string, string>();
   const scorePart = (part: string): number => {
     let best = 0;
+    const shortKana = isShortKana(part);
+    const hits: { kind: RecKind; index: number; score: number; endStep: number }[] = [];
     for (const [kind, perPart] of setsByKind) {
       const sets = perPart.get(part);
       const lattices = latticesByKind.get(kind);
       if (!sets || !lattices) continue;
-      for (const lat of lattices) {
-        const s = ctcKeywordScore(lat, sets);
-        if (s > best) best = s;
+      for (let index = 0; index < lattices.length; index++) {
+        const match = ctcKeywordScore(lattices[index], sets);
+        if (match.score > best) best = match.score;
+        if (shortKana && match.score >= opts.scoreThreshold) {
+          hits.push({ kind, index, ...match });
+        }
       }
     }
-    return best;
+    if (!shortKana || best < opts.scoreThreshold) return best;
+
+    hits.sort((a, b) => b.score - a.score);
+    let rejectedBy: { rival: string; rivalScore: number; targetScore: number; candidateScore: number; kind: RecKind } | null = null;
+    for (const hit of hits) {
+      const model = recModels.get(hit.kind)!;
+      const lat = latticesByKind.get(hit.kind)![hit.index];
+      const rivals = new Set<string>();
+      for (const [kind, lattices] of latticesByKind) {
+        const other = lattices[hit.index];
+        if (!other) continue;
+        const key = `${kind}:${hit.index}`;
+        let read = greedyCache.get(key);
+        if (read === undefined) {
+          read = greedyRead(other, recModels.get(kind)!);
+          greedyCache.set(key, read);
+        }
+        for (const rival of oneCharRivals(part, read)) rivals.add(rival);
+      }
+
+      let competing: { rival: string; rivalScore: number; targetScore: number; candidateScore: number; kind: RecKind } | null = null;
+      for (const rival of rivals) {
+        const ids = toClassIdSets(rival, model);
+        if (!ids) continue;
+        const match = ctcKeywordScore(lat, ids);
+        // 다른 단어가 같은 긴 줄의 먼 곳에 있을 뿐이면 이 매칭의 반증이 아니다.
+        if (Math.abs(match.endStep - hit.endStep) <= Math.max(2, Math.round(lat.T * 0.1)) && match.score >= hit.score) {
+          if (!competing || match.score > competing.rivalScore) {
+            competing = { rival, rivalScore: match.score, targetScore: hit.score, candidateScore: hit.score, kind: hit.kind };
+          }
+        }
+
+        // 일본어 모델이 짧은 가나를 자신 있게 잘못 읽을 때 v5가 같은 위치에서 훨씬
+        // 강하게 지지하는 대체 읽기는 반증으로 쓴다. 반대 방향으로 적용하면 v5가
+        // 정확히 읽은 めぐり까지 ja의 あぐり 오독 때문에 버려진다.
+        for (const [otherKind, otherLattices] of latticesByKind) {
+          if (hit.kind !== "ja" || otherKind !== "v5") continue;
+          const otherLat = otherLattices[hit.index];
+          const otherModel = recModels.get(otherKind)!;
+          const otherTargetIds = setsByKind.get(otherKind)?.get(part);
+          const otherRivalIds = toClassIdSets(rival, otherModel);
+          if (!otherLat || !otherTargetIds || !otherRivalIds) continue;
+          const otherRival = ctcKeywordScore(otherLat, otherRivalIds);
+          if (otherRival.score < opts.scoreThreshold || Math.abs(otherRival.endStep / otherLat.T - hit.endStep / lat.T) > 0.1) continue;
+          const otherTarget = ctcKeywordScore(otherLat, otherTargetIds);
+          if (otherRival.score < otherTarget.score * 2) continue;
+          if (!competing || otherRival.score > competing.rivalScore) {
+            competing = { rival, rivalScore: otherRival.score, targetScore: otherTarget.score, candidateScore: hit.score, kind: otherKind };
+          }
+        }
+      }
+      if (!competing) return hit.score;
+      if (!rejectedBy || competing.rivalScore > rejectedBy.rivalScore) {
+        rejectedBy = competing;
+      }
+    }
+    if (rejectedBy) {
+      console.log(`[ocr] short kana rejected - part: ${JSON.stringify(part)}, candidateScore: ${rejectedBy.candidateScore.toFixed(3)}, rival: ${JSON.stringify(rejectedBy.rival)}, rivalModel: ${rejectedBy.kind}, rivalScore: ${rejectedBy.rivalScore.toFixed(3)}, rivalModelTargetScore: ${rejectedBy.targetScore.toFixed(3)}`);
+    }
+    return 0;
   };
 
-  const detail: OcrResult["detail"] = [];
-  const found: string[] = [];
-  for (const list of searchLists) {
-    const parts = list.parts.map((text) => ({ text, score: scorePart(text) }));
-    const matched = parts.every((p) => p.score >= opts.scoreThreshold);
-    detail.push({ list: list.raw, matched, parts });
-    if (matched) found.push(list.raw);
-  }
+  const { detail, found, matchedKeywords } = evaluateSearchLists(searchLists, scorePart, opts.scoreThreshold);
 
   console.log(
     `[ocr] regions: ${boxes.length}, strips: ${strips.length}, lattices: ${[...latticesByKind].map(([k, v]) => `${k}=${v.length}`).join(",")}, matched: ${found.length}/${searchLists.length}, detMs: ${detMs}, stripMs: ${stripMs}, recMs: ${recMs}`,
   );
   for (const d of detail) {
-    console.log(`[ocr]   list="${d.list.replace(/\t/g, "\\t")}" matched=${d.matched} parts=${d.parts.map((p) => `${p.text}:${p.score.toFixed(3)}`).join(" ")}`);
+    console.log(`[ocr]   list="${d.list.replace(/\t/g, "\\t")}" matched=${d.matched} parts=${d.parts.map((p) => `${p.text}:${p.score.toFixed(3)}`).join(" ")} exclusions=${d.exclusions.map(p => `${p.text}:${p.score.toFixed(3)}`).join(" ")} excludedBy=${JSON.stringify(d.excludedBy)} keyword=${JSON.stringify(d.keyword)}`);
   }
 
-  return { found, detail, regions: boxes.length };
+  return { found, matchedKeywords, detail, regions: boxes.length };
 }

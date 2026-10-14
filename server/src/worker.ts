@@ -7,10 +7,9 @@
  * (AnnouncementAggregator/ocr-broker)를 주기적으로 당겨 작업을 가져가고 결과를 올린다.
  * HTTP 서버 모드(`npm run server`)는 그대로 남아 있고, 같은 기계에서 부를 수 있을 때 쓴다.
  *
- * OCR만 쓴다
- * 확장이 묻는 것은 "이 이미지에 이 문자열들이 있는가" 하나뿐이라 `performOCR`을 직접 부른다.
- * 비전 모델 6개(약 772MB)는 받지도 로드하지도 않고, DB도 열지 않는다 - OCR 경로는
- * 갤러리를 전혀 참조하지 않기 때문이다(ocr.ts는 db를 import하지 않는다).
+ * Default and OCR-only launchers claim OCR jobs without vision models or a gallery DB.
+ * Explicit --all mode also claims image jobs and compares requested registered names.
+ * Voice jobs belong to VoiceAnalyzer and are never claimed here.
  *
  * 이미지는 워커가 직접 받는다
  * job에는 URL만 실려 온다. pbs.twimg.com은 공개라 노트북이 자기 회선으로 받으면 되고,
@@ -35,7 +34,7 @@ import { execFile } from "child_process";
 import { promisify } from "util";
 
 import { ensureModelsDownloaded } from "./model-downloader";
-import { initOCR, parseSearchLists, performOCR } from "./ocr";
+import { initOCR, parseSearchLists, parseKeywordBlocks, performOCR, KeywordBlock } from "./ocr";
 import { loadConfig, PROJECT_ROOT } from "./config";
 import { appendAnalysisLog } from "./analysis-log";
 
@@ -47,6 +46,9 @@ const BROKER_URL = (process.env.OCR_BROKER_URL || "http://localhost:3100").repla
 const BROKER_SECRET: string = require(path.join(PROJECT_ROOT, "scripts/shared-secret.cjs")).readSecret();
 const INTERVAL_MS = Number(process.env.OCR_WORKER_INTERVAL_MS || 60000);
 const WORKER_ID = process.env.OCR_WORKER_ID || `imageanalyzer-${process.pid}`;
+// Vision work is opt-in; an OCR-only setting always wins over --all.
+const FULL_MODE = process.argv.includes("--all") && !process.argv.includes("--ocr-only") && process.env.IMAGEANALYZER_OCR_ONLY !== "1";
+let nextKind: "ocr" | "image" = "ocr";
 
 /**
  * 저배터리 자동 종료. **기본은 꺼져 있고**(0), 값을 주면 그 퍼센트에서 PC를 끈다.
@@ -84,7 +86,7 @@ const ALLOWED_IMAGE_HOSTS = new Set(["pbs.twimg.com"]);
 function isAllowedImageUrl(raw: string): boolean {
   try {
     const url = new URL(raw);
-    return url.protocol === "https:" && ALLOWED_IMAGE_HOSTS.has(url.hostname);
+    return url.protocol === "https:" && ALLOWED_IMAGE_HOSTS.has(url.hostname) && !url.username && !url.password && (!url.port || url.port === "443");
   } catch {
     return false;
   }
@@ -92,10 +94,13 @@ function isAllowedImageUrl(raw: string): boolean {
 
 interface Job {
   jobId: string;
+  kind?: "ocr" | "image";
+  names?: string[];
   postUrl: string;
   restId: string;
   imageUrls: string[];
   searchStrings: string;
+  blocks?: KeywordBlock[];
   createdAt: string;
 }
 
@@ -148,17 +153,18 @@ async function brokerFetch(pathname: string, init: RequestInit = {}): Promise<an
 
   // 텍스트로 읽어 받은 바이트 그대로 서명을 검증한다.
   const text = await response.text();
-  if (!response.ok) {
-    const err = new Error(`HTTP ${response.status}${text ? ` ${text.slice(0, 200)}` : ""}`) as BrokerError;
-    err.status = response.status;
-    throw err;
-  }
 
   // /health는 설계상 서명이 없다 (handshake이며 그것으로 아무것도 신뢰하지 않는다).
   if (BROKER_SECRET && nonce && pathname !== "/health") {
     if (response.headers.get("x-ocr-signature") !== hmacHex(`${nonce}\n${sha256Hex(text)}`)) {
       throw new Error("response signature mismatch (브로커가 보낸 응답이 아니다)");
     }
+  }
+
+  if (!response.ok) {
+    const err = new Error(`HTTP ${response.status}${text ? ` ${text.slice(0, 200)}` : ""}`) as BrokerError;
+    err.status = response.status;
+    throw err;
   }
 
   return JSON.parse(text);
@@ -194,21 +200,51 @@ async function verifyBroker(): Promise<void> {
 async function claimJob(): Promise<Job | null> {
   // 한 번에 하나만 잡는다. 여러 개를 잡아 두면 앞의 것을 처리하는 동안 뒤의 것 lease가
   // 만료되어, 아무도 손대지 않은 job을 잡고 있는 척하는 구간이 생긴다.
-  const data = await brokerFetch("/claim", {
-    method: "POST",
-    body: JSON.stringify({ max: 1, workerId: WORKER_ID }),
-  });
-  const jobs: Job[] = Array.isArray(data?.jobs) ? data.jobs : [];
-  return jobs.length > 0 ? jobs[0] : null;
+  const kinds = FULL_MODE ? [nextKind, nextKind === "ocr" ? "image" : "ocr"] : ["ocr"];
+  for (const kind of kinds) {
+    const data = await brokerFetch("/claim", {
+      method: "POST",
+      body: JSON.stringify({ max: 1, workerId: WORKER_ID, kinds: [kind] }),
+    });
+    const jobs: Job[] = Array.isArray(data?.jobs) ? data.jobs : [];
+    if (jobs.length) {
+      nextKind = kind === "ocr" ? "image" : "ocr";
+      return jobs[0];
+    }
+  }
+  return null;
 }
 
 async function fetchImageOnce(url: string): Promise<Buffer> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), IMAGE_FETCH_TIMEOUT_MS);
   try {
-    const response = await fetch(url, { signal: controller.signal });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    return Buffer.from(await response.arrayBuffer());
+    for (let redirects = 0; redirects <= 5; redirects++) {
+      if (!isAllowedImageUrl(url)) throw new Error("image URL rejected");
+      const response = await fetch(url, { signal: controller.signal, redirect: "manual" });
+      if (response.status >= 300 && response.status < 400 && response.headers.get("location")) {
+        await response.body?.cancel();
+        url = new URL(response.headers.get("location")!, url).href;
+        continue;
+      }
+      if (!response.ok || !response.body) throw new Error(`HTTP ${response.status}`);
+      const reader = response.body.getReader();
+      const parts: Buffer[] = [];
+      let size = 0;
+      try {
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          size += value.byteLength;
+          if (size > 32 * 1024 * 1024) throw new Error("image exceeds 32 MiB");
+          parts.push(Buffer.from(value));
+        }
+      } finally {
+        await reader.cancel();
+      }
+      return Buffer.concat(parts);
+    }
+    throw new Error("too many image redirects");
   } finally {
     clearTimeout(timer);
   }
@@ -246,10 +282,12 @@ async function fetchImage(url: string): Promise<Buffer | null> {
  * 이유로, 워커가 자기 searchStrings.tsv를 보면 "목록에 없어서 못 찾음"과 "있는데 못 읽음"이
  * 구분되지 않아 확장의 미스 보고가 무의미해진다.
  */
-async function runJob(job: Job, attemptId: string): Promise<{ found: string[]; regions: number; error: string | null }> {
-  const searchLists = parseSearchLists(job.searchStrings);
+async function runJob(job: Job, attemptId: string) {
+  const searchLists = Array.isArray(job.blocks) ? parseKeywordBlocks(job.blocks) : parseSearchLists(job.searchStrings);
   const cfg = loadConfig();
   const found = new Set<string>();
+  const matchedKeywords = new Set<string>();
+  const excluded: { imageUrl: string; keyword: string; terms: string[] }[] = [];
   let regions = 0;
   let fetched = 0;
 
@@ -264,7 +302,7 @@ async function runJob(job: Job, attemptId: string): Promise<{ found: string[]; r
       imageUrl: url,
     };
     // 요청 자체를 먼저 남긴다. 다운로드나 OCR이 실패해도 당시 URL과 전체 TSV를 잃지 않는다.
-    appendAnalysisLog({ event: "image_request", ...imageRef, searchStrings: job.searchStrings, ocrConfig: cfg.ocr });
+    appendAnalysisLog({ event: "image_request", ...imageRef, searchStrings: job.searchStrings, blocks: job.blocks, ocrConfig: cfg.ocr });
     if (searchLists.length === 0) {
       appendAnalysisLog({ event: "image_result", ...imageRef, status: "no_search_strings" });
       continue;
@@ -295,6 +333,10 @@ async function runJob(job: Job, attemptId: string): Promise<{ found: string[]; r
     }
     regions += result.regions;
     for (const line of result.found) found.add(line);
+    for (const keyword of result.matchedKeywords) matchedKeywords.add(keyword);
+    for (const detail of result.detail) {
+      if (detail.keyword && detail.excludedBy.length) excluded.push({ imageUrl: url, keyword: detail.keyword, terms: detail.excludedBy });
+    }
     appendAnalysisLog({
       event: "image_result", ...imageRef, status: "analyzed", imageSha256,
       bytes: buffer.length, found: result.found, detail: result.detail, regions: result.regions,
@@ -306,12 +348,55 @@ async function runJob(job: Job, attemptId: string): Promise<{ found: string[]; r
   }
 
   if (searchLists.length === 0) {
-    return { found: [], regions: 0, error: "job carried no search strings" };
+    return { found: [], matchedKeywords: [], excluded, regions: 0, error: "job carried no search strings" };
   }
   // 한 장도 못 받았으면 재시도해도 같으므로 error로 마감한다. 일부만 받았으면 받은 만큼의
   // 판정이 유효하므로 정상 결과로 올린다.
   const error = fetched === 0 ? `none of ${job.imageUrls.length} images could be fetched` : null;
-  return { found: [...found], regions, error };
+  return { found: [...found], matchedKeywords: [...matchedKeywords], excluded, regions, error };
+}
+
+async function runVisionJob(job: Job, attemptId: string) {
+  if (!FULL_MODE) throw new Error("image job received in OCR-only mode");
+  const { availableNames, analyzeNamedImage } = await import("./named-analysis");
+  const names = availableNames(job.names || []);
+  const skippedNames = (job.names || []).filter(name => !names.includes(name));
+  const matches = [];
+  let fetched = 0;
+  for (const [imageIndex, url] of job.imageUrls.entries()) {
+    const imageRef = { mode: "worker" as const, kind: "image" as const, workerId: WORKER_ID,
+      attemptId, jobId: job.jobId, postUrl: job.postUrl, imageIndex, imageUrl: url };
+    appendAnalysisLog({ event: "image_request", ...imageRef, requestedNames: job.names, names, skippedNames });
+    if (!names.length) {
+      appendAnalysisLog({ event: "image_result", ...imageRef, status: "no_registered_names" });
+      continue;
+    }
+    if (!isAllowedImageUrl(url)) {
+      console.warn(`Image URL rejected - jobId: ${job.jobId}, url: ${url} (허용 호스트: ${[...ALLOWED_IMAGE_HOSTS].join(", ")})`);
+      appendAnalysisLog({ event: "image_result", ...imageRef, status: "rejected_url" });
+      continue;
+    }
+    const buffer = await fetchImage(url);
+    if (!buffer) {
+      appendAnalysisLog({ event: "image_result", ...imageRef, status: "fetch_failed" });
+      continue;
+    }
+    fetched++;
+    const started = Date.now();
+    const imageSha256 = nodeCrypto.createHash("sha256").update(buffer).digest("hex");
+    let result;
+    try {
+      result = await analyzeNamedImage(buffer, names, loadConfig());
+    } catch (e: any) {
+      appendAnalysisLog({ event: "image_result", ...imageRef, status: "analysis_failed", imageSha256, error: e.message });
+      throw e;
+    }
+    matches.push(...result.map(match => ({ ...match, imageUrl: url })));
+    appendAnalysisLog({ event: "image_result", ...imageRef, status: "analyzed", imageSha256,
+      bytes: buffer.length, names, matches: result, elapsedMs: Date.now() - started });
+  }
+  const error = names.length > 0 && fetched === 0 ? `none of ${job.imageUrls.length} images could be fetched` : null;
+  return { found: [...new Set(matches.map(match => match.name))], regions: 0, error, matches, skippedNames };
 }
 
 async function tick(): Promise<void> {
@@ -330,11 +415,10 @@ async function tick(): Promise<void> {
     const attemptId = nodeCrypto.randomUUID();
     let payload: { found: string[]; regions: number; error: string | null };
     try {
-      payload = await runJob(job, attemptId);
+      payload = job.kind === "image" ? await runVisionJob(job, attemptId) : await runJob(job, attemptId);
       appendAnalysisLog({
         event: "job_result", mode: "worker", workerId: WORKER_ID, attemptId,
-        jobId: job.jobId, postUrl: job.postUrl, found: payload.found,
-        regions: payload.regions, error: payload.error,
+        jobId: job.jobId, postUrl: job.postUrl, kind: job.kind || "ocr", names: job.names, ...payload,
       });
     } catch (e: any) {
       // OCR 자체가 터진 경우. 결과를 올리지 않고 lease를 놓아 다음에 다시 잡히게 한다.
@@ -469,7 +553,7 @@ async function checkBatteryAndMaybeShutdown(): Promise<void> {
 }
 
 async function main() {
-  console.log(`Initializing OCR worker - broker: ${BROKER_URL}, intervalMs: ${INTERVAL_MS}, workerId: ${WORKER_ID}, auth: ${BROKER_SECRET ? "OCR1 signed" : "none"}`);
+  console.log(`Initializing ${FULL_MODE ? "OCR/image" : "OCR"} worker - broker: ${BROKER_URL}, intervalMs: ${INTERVAL_MS}, workerId: ${WORKER_ID}, auth: ${BROKER_SECRET ? "OCR1 signed" : "none"}`);
   console.log(
     BATTERY_SHUTDOWN_PERCENT > 0
       ? `Battery shutdown armed - threshold: ${BATTERY_SHUTDOWN_PERCENT}%, checkMs: ${BATTERY_CHECK_MS}, graceSec: ${BATTERY_SHUTDOWN_GRACE_SEC} (방전 중일 때만)`
@@ -479,10 +563,16 @@ async function main() {
   // 모델 로드 전에 확인한다. 주소가 틀렸으면 ONNX를 몇 초 들여 올릴 이유가 없다.
   await verifyBroker();
 
-  // OCR만 쓰므로 비전 모델은 받지도 로드하지도 않는다(ocrOnly=true).
-  await ensureModelsDownloaded(MODELS_DIR, true);
+  if (!BROKER_SECRET) throw new Error("OCR_BROKER_SECRET is required");
+  await ensureModelsDownloaded(MODELS_DIR, !FULL_MODE);
+  if (FULL_MODE) {
+    const { initDB } = await import("./db");
+    const { loadModels } = await import("./inference");
+    initDB(path.join(PROJECT_ROOT, "db"));
+    await loadModels(MODELS_DIR);
+  }
   await initOCR(MODELS_DIR);
-  console.log("OCR worker ready");
+  console.log(`Worker ready - kinds: ${FULL_MODE ? "ocr,image" : "ocr"}`);
 
   // 폴링 루프와 독립적으로 돈다 - 아래 for(;;)는 한 틱이 밀리면 그만큼 늦어지는데,
   // 배터리는 그 사이에도 계속 줄기 때문이다. 첫 확인은 즉시.

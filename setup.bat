@@ -39,9 +39,12 @@ echo        npm run register:all
 echo.
 echo   3. Set OCR search lists in searchStrings.tsv (one list per line, tab = AND)
 echo.
-echo   4. Start server:
-echo        npm run server   # production
-echo        npm run dev      # auto-reload
+echo   4. Start analysis:
+echo        server.bat          # full broker worker on Windows
+echo        server_local.bat    # full worker with local broker
+echo        server_shutdown.bat # full worker with timed Windows shutdown
+echo        npm run server      # manual HTTP API
+echo        npm run dev         # HTTP API with auto-reload
 echo.
 echo   5. Analyze without the server (threshold tuning, regression checks):
 echo        npm run analyze -- sample\

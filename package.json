@@ -6,6 +6,7 @@
   "scripts": {
     "build": "tsc -p server/tsconfig.json",
     "test": "npm run build && node --test",
+    "ocr:samples": "npm run build && node scripts/ocr-samples.cjs",
     "server": "npm run build && node server/dist/index.js",
     "server:ocr": "npm run build && node server/dist/index.js --ocr-only",
     "worker": "npm run build && node server/dist/worker.js",
