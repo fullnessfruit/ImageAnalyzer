@@ -48,7 +48,6 @@ const INTERVAL_MS = Number(process.env.OCR_WORKER_INTERVAL_MS || 60000);
 const WORKER_ID = process.env.OCR_WORKER_ID || `imageanalyzer-${process.pid}`;
 // Vision work is opt-in; an OCR-only setting always wins over --all.
 const FULL_MODE = process.argv.includes("--all") && !process.argv.includes("--ocr-only") && process.env.IMAGEANALYZER_OCR_ONLY !== "1";
-let nextKind: "ocr" | "image" = "ocr";
 
 /**
  * 저배터리 자동 종료. **기본은 꺼져 있고**(0), 값을 주면 그 퍼센트에서 PC를 끈다.
@@ -198,21 +197,14 @@ async function verifyBroker(): Promise<void> {
 }
 
 async function claimJob(): Promise<Job | null> {
-  // 한 번에 하나만 잡는다. 여러 개를 잡아 두면 앞의 것을 처리하는 동안 뒤의 것 lease가
-  // 만료되어, 아무도 손대지 않은 job을 잡고 있는 척하는 구간이 생긴다.
-  const kinds = FULL_MODE ? [nextKind, nextKind === "ocr" ? "image" : "ocr"] : ["ocr"];
-  for (const kind of kinds) {
-    const data = await brokerFetch("/claim", {
-      method: "POST",
-      body: JSON.stringify({ max: 1, workerId: WORKER_ID, kinds: [kind] }),
-    });
-    const jobs: Job[] = Array.isArray(data?.jobs) ? data.jobs : [];
-    if (jobs.length) {
-      nextKind = kind === "ocr" ? "image" : "ocr";
-      return jobs[0];
-    }
-  }
-  return null;
+  // Let the broker order all eligible work by post time instead of alternating kinds.
+  // Claim only one job so leases do not expire while waiting behind local work.
+  const data = await brokerFetch("/claim", {
+    method: "POST",
+    body: JSON.stringify({ max: 1, workerId: WORKER_ID, kinds: FULL_MODE ? ["ocr", "image"] : ["ocr"] }),
+  });
+  const jobs: Job[] = Array.isArray(data?.jobs) ? data.jobs : [];
+  return jobs[0] || null;
 }
 
 async function fetchImageOnce(url: string): Promise<Buffer> {
