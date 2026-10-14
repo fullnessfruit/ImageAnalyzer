@@ -258,7 +258,7 @@ Delete `db/embeddings.db` and re-run `npm run register:all`.
 
 ### Named image jobs
 
-`npm run worker -- --all` alternates OCR and image claims. Plain `npm run worker`, `--ocr-only`, or `IMAGEANALYZER_OCR_ONLY=1` consumes only OCR. Image jobs match only requested registered folder names; unknown names are reported in `skippedNames` and weak candidates never trigger an alert. Empty target lists do not run vision inference. The extension handles delivery and deduplication.
+`npm run worker -- --all` requests OCR and image jobs together and processes one at a time in the broker's oldest-post-first order (receipt time when post time is absent). It does not alternate job kinds. Plain `npm run worker`, `--ocr-only`, or `IMAGEANALYZER_OCR_ONLY=1` consumes only OCR. Image jobs match only requested registered folder names; unknown names are reported in `skippedNames` and weak candidates never trigger an alert. Empty target lists do not run vision inference. The extension handles delivery and deduplication.
 
 Image/voice jobs share the OCR broker port. Additional jobs expire after one hour on queue I/O (no periodic cleanup timer); OCR retains its 24-hour lifetime. Stopped/OCR-only analyzers do not automatically switch mode or call OpenAI for these jobs.
 
