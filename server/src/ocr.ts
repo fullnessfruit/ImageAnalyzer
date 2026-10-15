@@ -229,6 +229,32 @@ function fromRaw(src: RawSrc): sharp.Sharp {
   return sharp(src.buf, { raw: { width: src.width, height: src.height, channels: 3 } });
 }
 
+/** 작은 카드의 글자는 원본 크기 DBNet에서 사라진다. 겹치는 타일은 줄이 경계에 걸리지 않게 한다. */
+const SMALL_IMAGE_MAX_SIDE = 500;
+const SMALL_IMAGE_TILE_FRACTION = 0.6;
+const SMALL_IMAGE_TILE_SCALE = 4;
+
+async function enlargedSmallImageTiles(src: RawSrc): Promise<RawSrc[]> {
+  if (Math.max(src.width, src.height) > SMALL_IMAGE_MAX_SIDE || Math.min(src.width, src.height) < 120) return [];
+
+  const tileWidth = Math.ceil(src.width * SMALL_IMAGE_TILE_FRACTION);
+  const tileHeight = Math.ceil(src.height * SMALL_IMAGE_TILE_FRACTION);
+  const tiles: RawSrc[] = [];
+  for (const top of [0, src.height - tileHeight]) {
+    for (const left of [0, src.width - tileWidth]) {
+      // sharp는 extract/resize를 한 파이프라인에서 요청 순서대로 실행하지 않을 수 있다.
+      // 원본 좌표에서 먼저 잘라 별도 raw 파이프라인으로 확대한 뒤 검출한다.
+      const cropped = await fromRaw(src).extract({ left, top, width: tileWidth, height: tileHeight }).raw().toBuffer();
+      const width = tileWidth * SMALL_IMAGE_TILE_SCALE;
+      const height = tileHeight * SMALL_IMAGE_TILE_SCALE;
+      const buf = await sharp(cropped, { raw: { width: tileWidth, height: tileHeight, channels: 3 } })
+        .resize(width, height, { fit: "fill" }).raw().toBuffer();
+      tiles.push({ buf, width, height });
+    }
+  }
+  return tiles;
+}
+
 async function detectAtScale(src: RawSrc, limitSide: number): Promise<TextBox[]> {
   if (!detSession) return [];
 
@@ -881,10 +907,14 @@ export async function performOCR(
   const src: RawSrc = { buf: decoded.data, width: decoded.info.width, height: decoded.info.height };
 
   const tDet = Date.now();
-  const boxes = await detectTextRegions(src, opts.detScales);
+  const sources = [src, ...(await enlargedSmallImageTiles(src))];
+  const regions: { src: RawSrc; box: TextBox }[] = [];
+  for (const source of sources) {
+    for (const box of await detectTextRegions(source, opts.detScales)) regions.push({ src: source, box });
+  }
   const detMs = Date.now() - tDet;
-  if (boxes.length === 0) {
-    console.log(`[ocr] no text regions detected - scales: ${opts.detScales.join(",")}, detMs: ${detMs}`);
+  if (regions.length === 0) {
+    console.log(`[ocr] no text regions detected - scales: ${opts.detScales.join(",")}, tiles: ${sources.length - 1}, detMs: ${detMs}`);
     return empty;
   }
 
@@ -895,9 +925,9 @@ export async function performOCR(
   // 인식이 전체 시간의 대부분이라 최악 케이스에 상한을 둔다. 검출 점수가 높은
   // 영역부터 처리하므로 잘리는 것은 신뢰도가 낮은 영역이다.
   const tStrip = Date.now();
-  const ranked = [...boxes].sort((a, b) => b.score - a.score).slice(0, MAX_REGIONS);
+  const ranked = regions.sort((a, b) => b.box.score - a.box.score).slice(0, MAX_REGIONS);
   const strips: Strip[] = [];
-  for (const tb of ranked) strips.push(...(await buildStripsForRegion(src, tb, minStripWidth)));
+  for (const region of ranked) strips.push(...(await buildStripsForRegion(region.src, region.box, minStripWidth)));
   const stripMs = Date.now() - tStrip;
 
   // 검색어를 표현할 수 있는 모델은 전부 돌리고 점수로 승부를 가린다.
@@ -1019,11 +1049,11 @@ export async function performOCR(
   const { detail, found, matchedKeywords } = evaluateSearchLists(searchLists, scorePart, opts.scoreThreshold);
 
   console.log(
-    `[ocr] regions: ${boxes.length}, oriented: ${boxes.filter((box) => box.oriented).length}, strips: ${strips.length}, lattices: ${[...latticesByKind].map(([k, v]) => `${k}=${v.length}`).join(",")}, matched: ${found.length}/${searchLists.length}, detMs: ${detMs}, stripMs: ${stripMs}, recMs: ${recMs}`,
+    `[ocr] regions: ${regions.length}, oriented: ${regions.filter((region) => region.box.oriented).length}, tiles: ${sources.length - 1}, strips: ${strips.length}, lattices: ${[...latticesByKind].map(([k, v]) => `${k}=${v.length}`).join(",")}, matched: ${found.length}/${searchLists.length}, detMs: ${detMs}, stripMs: ${stripMs}, recMs: ${recMs}`,
   );
   for (const d of detail) {
     console.log(`[ocr]   list="${d.list.replace(/\t/g, "\\t")}" matched=${d.matched} parts=${d.parts.map((p) => `${p.text}:${p.score.toFixed(3)}`).join(" ")} exclusions=${d.exclusions.map(p => `${p.text}:${p.score.toFixed(3)}`).join(" ")} excludedBy=${JSON.stringify(d.excludedBy)} keyword=${JSON.stringify(d.keyword)}`);
   }
 
-  return { found, matchedKeywords, detail, regions: boxes.length };
+  return { found, matchedKeywords, detail, regions: regions.length };
 }
