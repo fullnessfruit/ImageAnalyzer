@@ -203,11 +203,7 @@ function alternativesFor(ch: string): string[] {
 // ============================================================
 
 const DET_THRESH = 0.3;
-/**
- * 박스 점수는 바운딩 박스 영역의 확률 평균으로 낸다(PaddleOCR box_score_fast와 동일).
- * 키워드 스포팅에서는 재현율이 정밀도보다 훨씬 중요하다 - 잉여 영역은 어떤 검색어와도
- * 매칭되지 않고 사라질 뿐이지만, 놓친 영역은 복구할 방법이 없다.
- */
+/** 축 정렬된 박스의 확률 평균. 긴 대각선 글자는 배경이 평균을 낮추므로 별도로 구제한다. */
 const DET_BOX_THRESH = 0.4;
 const DET_MIN_AREA = 12;
 const DET_UNCLIP_RATIO = 1.6;
@@ -215,6 +211,8 @@ const DET_UNCLIP_RATIO = 1.6;
 interface TextBox {
   box: [number, number, number, number];
   score: number;
+  /** DBNet 연결 컴포넌트의 주축으로 펴서 읽는, 기울어진 글자 영역. */
+  oriented?: { cx: number; cy: number; width: number; height: number; angle: number };
 }
 
 /**
@@ -289,6 +287,7 @@ async function detectAtScale(src: RawSrc, limitSide: number): Promise<TextBox[]>
 
   const comps = Array.from({ length: numLabels }, () => ({
     minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity, area: 0,
+    sumX: 0, sumY: 0, sumXX: 0, sumYY: 0, sumXY: 0, sumProb: 0,
   }));
   for (let y = 0; y < newH; y++) {
     for (let x = 0; x < newW; x++) {
@@ -300,11 +299,18 @@ async function detectAtScale(src: RawSrc, limitSide: number): Promise<TextBox[]>
       if (x > c.maxX) c.maxX = x;
       if (y > c.maxY) c.maxY = y;
       c.area++;
+      c.sumX += x;
+      c.sumY += y;
+      c.sumXX += x * x;
+      c.sumYY += y * y;
+      c.sumXY += x * y;
+      c.sumProb += prob[y * newW + x];
     }
   }
 
   const boxes: TextBox[] = [];
-  for (const c of comps) {
+  for (let index = 0; index < comps.length; index++) {
+    const c = comps[index];
     if (c.area < DET_MIN_AREA) continue;
 
     const bw = c.maxX - c.minX + 1;
@@ -316,7 +322,46 @@ async function detectAtScale(src: RawSrc, limitSide: number): Promise<TextBox[]>
       for (let x = c.minX; x <= c.maxX; x++) sum += prob[y * newW + x];
     }
     const score = sum / (bw * bh);
-    if (score < DET_BOX_THRESH) continue;
+    let oriented: TextBox["oriented"];
+    if (score < DET_BOX_THRESH && c.area >= 100 && bw >= 50 && bh >= 20) {
+      const mx = c.sumX / c.area;
+      const my = c.sumY / c.area;
+      const vx = c.sumXX / c.area - mx * mx;
+      const vy = c.sumYY / c.area - my * my;
+      const cov = c.sumXY / c.area - mx * my;
+      const delta = Math.hypot(vx - vy, 2 * cov);
+      const aspect = Math.sqrt((vx + vy + delta) / Math.max(vx + vy - delta, 1e-6));
+      const angle = Math.atan2(2 * cov, vx - vy) / 2;
+      if (aspect >= 5 && Math.abs(angle) >= Math.PI / 15 && Math.abs(angle) <= Math.PI / 4) {
+        const ux = Math.cos(angle);
+        const uy = Math.sin(angle);
+        let minAlong = Infinity, maxAlong = -Infinity, minAcross = Infinity, maxAcross = -Infinity;
+        for (let y = c.minY; y <= c.maxY; y++) {
+          for (let x = c.minX; x <= c.maxX; x++) {
+            if (labels[y * newW + x] !== index + 1) continue;
+            const along = (x - mx) * ux + (y - my) * uy;
+            const across = -(x - mx) * uy + (y - my) * ux;
+            minAlong = Math.min(minAlong, along);
+            maxAlong = Math.max(maxAlong, along);
+            minAcross = Math.min(minAcross, across);
+            maxAcross = Math.max(maxAcross, across);
+          }
+        }
+        const lineHeight = maxAcross - minAcross + 1;
+        const centerAlong = (minAlong + maxAlong) / 2;
+        const centerAcross = (minAcross + maxAcross) / 2;
+        const sourceAngle = Math.atan2(uy * scaleY, ux * scaleX);
+        const sourceScale = (scaleX + scaleY) / 2;
+        oriented = {
+          cx: (mx + centerAlong * ux - centerAcross * uy) * scaleX,
+          cy: (my + centerAlong * uy + centerAcross * ux) * scaleY,
+          width: (maxAlong - minAlong + 1 + lineHeight * 0.6) * sourceScale,
+          height: lineHeight * 1.7 * sourceScale,
+          angle: sourceAngle,
+        };
+      }
+    }
+    if (score < DET_BOX_THRESH && !oriented) continue;
 
     // DBNet은 축소된 폴리곤을 출력한다. 복원은 모든 변을 같은 거리만큼 바깥으로 미는
     // 등방 확장이어야 한다. 박스 크기에 비례해 늘리면 가로로만 과확장되어 옆 글자를 삼킨다.
@@ -327,7 +372,9 @@ async function detectAtScale(src: RawSrc, limitSide: number): Promise<TextBox[]>
     const y1 = Math.min(origH, (c.maxY + 1 + offset) * scaleY);
     if (x1 - x0 < 2 || y1 - y0 < 2) continue;
 
-    boxes.push({ box: [x0, y0, x1 - x0, y1 - y0], score });
+    // 이진화된 픽셀만의 평균은 낙관적이므로 후보 정렬에서는 낮춰 사용한다.
+    const rankScore = oriented ? c.sumProb / c.area * 0.75 : score;
+    boxes.push({ box: [x0, y0, x1 - x0, y1 - y0], score: rankScore, oriented });
   }
 
   return boxes;
@@ -383,12 +430,16 @@ function mergeIntoLines(boxes: TextBox[]): TextBox[] {
     current.sort((a, b) => a.box[0] - b.box[0]);
     for (let i = 0; i < current.length; i++) {
       if (used.has(i)) continue;
+      if (current[i].oriented) {
+        merged.push(current[i]);
+        continue;
+      }
       let [ax, ay, aw, ah] = current[i].box;
       let score = current[i].score;
       let count = 1;
 
       for (let j = i + 1; j < current.length; j++) {
-        if (used.has(j)) continue;
+        if (used.has(j) || current[j].oriented) continue;
         const [bx, by, bw, bh] = current[j].box;
 
         // 세로 범위가 대부분 겹치고 높이가 비슷하며 가로 간격이 좁아야 같은 줄로 본다.
@@ -401,10 +452,12 @@ function mergeIntoLines(boxes: TextBox[]): TextBox[] {
 
         const nx = Math.min(ax, bx);
         const ny = Math.min(ay, by);
+        const right = Math.max(ax + aw, bx + bw);
+        const bottom = Math.max(ay + ah, by + bh);
         ax = nx;
         ay = ny;
-        aw = Math.max(ax + aw, bx + bw) - nx;
-        ah = Math.max(ay + ah, by + bh) - ny;
+        aw = right - nx;
+        ah = bottom - ny;
         score += current[j].score;
         count++;
         used.add(j);
@@ -523,15 +576,47 @@ function unstackVertical(crop: Buffer, w: number, h: number): { buf: Buffer; w: 
   return { buf, w: outW, h: cellH };
 }
 
+/** DBNet 주축을 가로로 펴면서 원본 RGB를 한 번만 이중선형 샘플링한다. */
+function cropOriented(src: RawSrc, region: NonNullable<TextBox["oriented"]>): { buf: Buffer; w: number; h: number } {
+  const w = Math.max(1, Math.ceil(region.width));
+  const h = Math.max(1, Math.ceil(region.height));
+  const buf = Buffer.alloc(w * h * 3, 255);
+  const ux = Math.cos(region.angle);
+  const uy = Math.sin(region.angle);
+  const halfW = (w - 1) / 2;
+  const halfH = (h - 1) / 2;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const sx = region.cx + (x - halfW) * ux - (y - halfH) * uy;
+      const sy = region.cy + (x - halfW) * uy + (y - halfH) * ux;
+      if (sx < 0 || sy < 0 || sx >= src.width - 1 || sy >= src.height - 1) continue;
+      const ix = Math.floor(sx);
+      const iy = Math.floor(sy);
+      const fx = sx - ix;
+      const fy = sy - iy;
+      const base = (iy * src.width + ix) * 3;
+      const dst = (y * w + x) * 3;
+      for (let channel = 0; channel < 3; channel++) {
+        const top = src.buf[base + channel] * (1 - fx) + src.buf[base + 3 + channel] * fx;
+        const bottom = src.buf[base + src.width * 3 + channel] * (1 - fx) + src.buf[base + src.width * 3 + 3 + channel] * fx;
+        buf[dst + channel] = Math.round(top * (1 - fy) + bottom * fy);
+      }
+    }
+  }
+  return { buf, w, h };
+}
+
 /**
  * 한 텍스트 영역이 만들어내는 스트립들. 세로쓰기 분해본과 긴 줄 분할로 여러 개가 나온다.
  * 스트립은 모델과 무관한 이미지라 여러 언어 모델이 같은 스트립을 공유한다.
  */
 async function buildStripsForRegion(
   src: RawSrc,
-  box: [number, number, number, number],
+  region: TextBox,
   minStripWidth: number,
 ): Promise<Strip[]> {
+  if (region.oriented) return resizeAndChunkStrips([cropOriented(src, region.oriented)], minStripWidth);
+  const box = region.box;
   const left = Math.max(0, Math.min(Math.round(box[0]), src.width - 1));
   const top = Math.max(0, Math.min(Math.round(box[1]), src.height - 1));
   const width = Math.max(1, Math.min(Math.round(box[2]), src.width - left));
@@ -547,6 +632,10 @@ async function buildStripsForRegion(
     if (unstacked) sources.push(unstacked);
   }
 
+  return resizeAndChunkStrips(sources, minStripWidth);
+}
+
+async function resizeAndChunkStrips(sources: { buf: Buffer; w: number; h: number }[], minStripWidth: number): Promise<Strip[]> {
   const strips: Strip[] = [];
   for (const s of sources) {
     const targetW = Math.max(8, Math.round(REC_HEIGHT * (s.w / s.h)));
@@ -808,7 +897,7 @@ export async function performOCR(
   const tStrip = Date.now();
   const ranked = [...boxes].sort((a, b) => b.score - a.score).slice(0, MAX_REGIONS);
   const strips: Strip[] = [];
-  for (const tb of ranked) strips.push(...(await buildStripsForRegion(src, tb.box, minStripWidth)));
+  for (const tb of ranked) strips.push(...(await buildStripsForRegion(src, tb, minStripWidth)));
   const stripMs = Date.now() - tStrip;
 
   // 검색어를 표현할 수 있는 모델은 전부 돌리고 점수로 승부를 가린다.
@@ -930,7 +1019,7 @@ export async function performOCR(
   const { detail, found, matchedKeywords } = evaluateSearchLists(searchLists, scorePart, opts.scoreThreshold);
 
   console.log(
-    `[ocr] regions: ${boxes.length}, strips: ${strips.length}, lattices: ${[...latticesByKind].map(([k, v]) => `${k}=${v.length}`).join(",")}, matched: ${found.length}/${searchLists.length}, detMs: ${detMs}, stripMs: ${stripMs}, recMs: ${recMs}`,
+    `[ocr] regions: ${boxes.length}, oriented: ${boxes.filter((box) => box.oriented).length}, strips: ${strips.length}, lattices: ${[...latticesByKind].map(([k, v]) => `${k}=${v.length}`).join(",")}, matched: ${found.length}/${searchLists.length}, detMs: ${detMs}, stripMs: ${stripMs}, recMs: ${recMs}`,
   );
   for (const d of detail) {
     console.log(`[ocr]   list="${d.list.replace(/\t/g, "\\t")}" matched=${d.matched} parts=${d.parts.map((p) => `${p.text}:${p.score.toFixed(3)}`).join(" ")} exclusions=${d.exclusions.map(p => `${p.text}:${p.score.toFixed(3)}`).join(" ")} excludedBy=${JSON.stringify(d.excludedBy)} keyword=${JSON.stringify(d.keyword)}`);
