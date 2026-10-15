@@ -231,7 +231,7 @@ function fromRaw(src: RawSrc): sharp.Sharp {
 
 /** 보통 비율의 작은 이미지는 내용과 무관하게 확대한다. 타일은 경계에서 겹치게 한다. */
 const SMALL_IMAGE_MAX_SIDE = 500;
-const SMALL_IMAGE_MAX_ASPECT_RATIO = 3;
+const SMALL_IMAGE_MAX_ASPECT_RATIO = 16 / 9;
 const SMALL_IMAGE_TILE_FRACTION = 0.6;
 const SMALL_IMAGE_SCALE = 4;
 
@@ -245,7 +245,7 @@ async function enlargeRaw(src: RawSrc): Promise<RawSrc> {
 async function enlargedSmallImageTiles(src: RawSrc): Promise<RawSrc[]> {
   const longSide = Math.max(src.width, src.height);
   const shortSide = Math.min(src.width, src.height);
-  if (longSide > SMALL_IMAGE_MAX_SIDE || longSide / shortSide >= SMALL_IMAGE_MAX_ASPECT_RATIO) return [];
+  if (longSide > SMALL_IMAGE_MAX_SIDE || longSide / shortSide > SMALL_IMAGE_MAX_ASPECT_RATIO) return [];
 
   const tileWidth = Math.ceil(src.width * SMALL_IMAGE_TILE_FRACTION);
   const tileHeight = Math.ceil(src.height * SMALL_IMAGE_TILE_FRACTION);
