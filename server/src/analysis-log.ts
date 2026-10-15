@@ -5,7 +5,7 @@ import path from "path";
 import { PROJECT_ROOT } from "./config";
 
 export type AnalysisLogEntry = Record<string, unknown> & {
-  event: "image_request" | "image_result" | "job_result" | "job_delivery";
+  event: "image_request" | "image_result" | "job_result" | "job_delivery" | "job_error";
   mode: "worker" | "http" | "cli";
 };
 
@@ -20,4 +20,20 @@ export function appendAnalysisLog(entry: AnalysisLogEntry, projectRoot: string =
   const directory = path.join(projectRoot, "log");
   fs.mkdirSync(directory, { recursive: true });
   fs.appendFileSync(path.join(directory, LOG_FILENAME), `[${timestamp}] ${JSON.stringify({ processId: process.pid, ...entry })}\n`, "utf8");
+}
+
+/** Keep the actual nested failure in both one-line audit rows and broker releases. */
+export function summarizeAnalysisError(error: unknown): string {
+  const parts: string[] = [];
+  const seen = new Set<unknown>();
+  let current: any = error;
+  while (current != null && !seen.has(current) && parts.length < 6) {
+    seen.add(current);
+    const message = current instanceof Error || typeof current === "object"
+      ? `${current.name || "Error"}: ${current.message || String(current)}${current.code ? ` (${current.code})` : ""}`
+      : String(current);
+    parts.push(message.replace(/\s+/g, " ").slice(0, 500));
+    current = current.cause;
+  }
+  return parts.join(" <- ").slice(0, 2000);
 }

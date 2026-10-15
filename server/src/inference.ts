@@ -161,15 +161,17 @@ export interface Detection {
   landmarks?: number[];
 }
 
-export async function cropRegion(imageBuffer: Buffer, box: Box): Promise<Buffer> {
-  const meta = await sharp(imageBuffer).metadata();
-  const imgW = meta.width!;
-  const imgH = meta.height!;
+function cropRectangle(box: Box, imgW: number, imgH: number): { left: number; top: number; width: number; height: number } {
   const left = Math.max(0, Math.min(Math.round(box[0]), imgW - 1));
   const top = Math.max(0, Math.min(Math.round(box[1]), imgH - 1));
   const width = Math.max(1, Math.min(Math.round(box[2]), imgW - left));
   const height = Math.max(1, Math.min(Math.round(box[3]), imgH - top));
-  return sharp(imageBuffer).extract({ left, top, width, height }).toBuffer();
+  return { left, top, width, height };
+}
+
+export async function cropRegion(imageBuffer: Buffer, box: Box): Promise<Buffer> {
+  const meta = await sharp(imageBuffer).metadata();
+  return sharp(imageBuffer).extract(cropRectangle(box, meta.width!, meta.height!)).toBuffer();
 }
 
 /**
@@ -179,8 +181,9 @@ export async function cropRegion(imageBuffer: Buffer, box: Box): Promise<Buffer>
  * 머리카락까지 덮도록 얼굴 위쪽에 높이의 60%를 더 확장한다.
  */
 export async function cropWithMask(imageBuffer: Buffer, box: Box, maskBoxes: Box[]): Promise<Buffer> {
-  const [bx, by, bw, bh] = box.map(Math.round) as Box;
-  const cropped = await cropRegion(imageBuffer, box);
+  const meta = await sharp(imageBuffer).metadata();
+  const { left: bx, top: by, width: bw, height: bh } = cropRectangle(box, meta.width!, meta.height!);
+  const cropped = await sharp(imageBuffer).extract({ left: bx, top: by, width: bw, height: bh }).toBuffer();
 
   const overlays: sharp.OverlayOptions[] = [];
   for (const m of maskBoxes) {
@@ -477,10 +480,12 @@ export async function extractFaceEmbedding(aligned: Buffer): Promise<Float32Arra
 }
 
 /**
- * 품질 게이트. 너무 작거나 포즈가 극단적인 얼굴은 임베딩이 신뢰할 수 없어
- * 갤러리와 질의 양쪽을 오염시킨다. 매칭을 시도하지 않는 편이 낫다.
+ * 품질 게이트. 작은 얼굴과 극단 포즈는 등록에서 제외한다. 질의에서는
+ * 최소 크기를 통과한 극단 포즈만 더 높은 점수와 마진을 요구해 별도로 판정한다.
  */
-export function faceQualityOk(det: Detection, minSize = 40): boolean {
+export const MIN_FACE_SIZE = 40;
+
+export function faceQualityOk(det: Detection, minSize = MIN_FACE_SIZE): boolean {
   if (det.box[2] < minSize || det.box[3] < minSize) return false;
   if (!det.landmarks) return true;
 
