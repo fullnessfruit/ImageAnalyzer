@@ -550,6 +550,14 @@ JSON 문자열 안에서 이스케이프되므로 `rg`로 행 단위 검색할 �
 조용히 삼키지 않으므로 HTTP는 실패 응답을 내고, 워커는 분석을 멈춰 job을 release하며,
 CLI도 실패를 보고한다.
 
+### server/src/job-image-cache.ts
+**역할**: 한 브로커 job 안에서 동일한 이미지 바이트를 중복 추론하지 않는다.
+`JobImageCache.getOrAnalyze()`는 다운로드된 이미지의 SHA-256을 키로 성공 결과와 첫 URL만
+보관한다. URL 문자열이 달라도 바이트가 같으면 첫 결과를 재사용하며, 실패한 추론은 보관하지
+않아 job 재시도 시 다시 분석한다. 캐시는 job마다 새로 만들어져 다른 검색 목록이나 등록
+상태의 결과가 섞이지 않는다. 버퍼 자체는 보관하지 않아 이미지 수에 비례한 메모리 증가를
+줄인다.
+
 ### server/src/index.ts
 **역할**: HTTP 계층. `POST /analyze`(multipart `image`), `GET /health`(모델·갤러리 상태).
 모든 Origin CORS 허용(크롬 확장용). 설정은 `config.ts`의 `loadConfig()`를 요청마다 호출한다.
@@ -569,6 +577,11 @@ CLI도 실패를 보고한다.
 **역할**: 브로커 폴링 워커. NAT 안쪽에서 도는 실행 모드이며 HTTP 서버를 열지 않는다.
 `runJob()`은 각 URL을 처리하기 전에 job의 원본 TSV·키워드별 제외어·URL을 파일에 남긴다. 이미지별 제외 판정은 `detail[].excludedBy`에 기록하고 유효한 `matchedKeywords`를 합친다. 브로커에는 키워드 식별자와 `{imageUrl, keyword, terms}` 제외 근거도 올린다. URL 거부·
 다운로드 실패·OCR 실패·성공을 같은 `attemptId`와 `imageIndex`의 결과 행으로 기록한다.
+`runJob()`과 `runVisionJob()`은 다운로드 성공 뒤 바이트 해시를 계산해 job별 `JobImageCache`를
+조회한다. 같은 바이트의 다른 URL도 요청/결과 행은 각각 남기되, 두 번째부터 추론을 생략하고
+`status: "reused"`와 최초 URL을 기록한다. 각 URL의 `found`/`matches`/제외 근거는 동일한
+결과에서 다시 구성하므로 브로커 결과의 URL 대응은 유지된다. 비전 설정은 job 시작 때 한 번
+읽어 재사용 결과와 새 추론이 같은 설정을 쓰게 한다.
 `tick()`은 이미지 결과를 합산해 브로커에 올릴 내용과 업로드 성공·중복 완료·실패도 기록한다.
 과거의 콘솔 출력이나 확장 `background-log_*.txt`에는 이미지 URL과 전체 검색 목록이 한
 곳에 없었고 브로커 파일도 처리 뒤 삭제됐으므로, 이 로컬 기록이 이후 운용 재검사의 기준이다.
@@ -712,6 +725,11 @@ HTTP와 같은 로그 함수로 남긴다. `mode: "cli"`로 운용 워커 기록
 **역할**: `npm test`에서 빌드된 갤러리 판정 함수를 검증한다. 한 이름의 서로 다른 의상
 참조를 중심점으로 섞으면 놓치는 사례와, 최대 참조 점수를 써도 다른 이름과의 마진이
 부족하면 기각해야 하는 사례를 분리해 확인한다.
+
+### tests/analysis-log.test.cjs / tests/inference-crop.test.cjs / tests/job-image-cache.test.cjs
+**역할**: UTC 파일·행 시각과 요청/결과의 연결, 이미지 경계를 넘는 사람 박스에서 의상
+마스크 합성이 성공하는지, 서로 다른 URL의 동일 바이트가 한 job에서 한 번만 추론되면서
+실패한 추론은 재시도 가능한지를 각각 확인한다.
 
 ### scripts/shared-secret.cjs / setup.bat / setup.sh
 **역할**: ImageAnalyzer와 VoiceAnalyzer 및 OCR 브로커가 `OCR_BROKER_SECRET` 하나를 공유하게 한다. 설치 스크립트는 저장소 루트에서 helper의 `ensure`를 호출한 뒤 기존 의존성·모델·DB 설치를 진행한다. 설치가 워커나 VoiceAnalyzer 분석을 시작하지 않는다.

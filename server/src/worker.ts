@@ -37,6 +37,7 @@ import { ensureModelsDownloaded } from "./model-downloader";
 import { initOCR, parseSearchLists, parseKeywordBlocks, performOCR, KeywordBlock } from "./ocr";
 import { loadConfig, PROJECT_ROOT } from "./config";
 import { appendAnalysisLog } from "./analysis-log";
+import { JobImageCache } from "./job-image-cache";
 
 const execFileAsync = promisify(execFile);
 
@@ -282,6 +283,7 @@ async function runJob(job: Job, attemptId: string) {
   const excluded: { imageUrl: string; keyword: string; terms: string[] }[] = [];
   let regions = 0;
   let fetched = 0;
+  const analyzed = new JobImageCache<Awaited<ReturnType<typeof performOCR>>>();
 
   for (const [imageIndex, url] of job.imageUrls.entries()) {
     const imageRef = {
@@ -317,8 +319,11 @@ async function runJob(job: Job, attemptId: string) {
     const started = Date.now();
     const imageSha256 = nodeCrypto.createHash("sha256").update(buffer).digest("hex");
     let result;
+    let reusedFromImageUrl: string | undefined;
     try {
-      result = await performOCR(buffer, searchLists, cfg.ocr);
+      ({ result, reusedFromImageUrl } = await analyzed.getOrAnalyze(
+        imageSha256, url, () => performOCR(buffer, searchLists, cfg.ocr),
+      ));
     } catch (e: any) {
       appendAnalysisLog({ event: "image_result", ...imageRef, status: "ocr_failed", imageSha256, error: e.message });
       throw e;
@@ -330,12 +335,13 @@ async function runJob(job: Job, attemptId: string) {
       if (detail.keyword && detail.excludedBy.length) excluded.push({ imageUrl: url, keyword: detail.keyword, terms: detail.excludedBy });
     }
     appendAnalysisLog({
-      event: "image_result", ...imageRef, status: "analyzed", imageSha256,
+      event: "image_result", ...imageRef, status: reusedFromImageUrl ? "reused" : "analyzed", imageSha256,
+      reusedFromImageUrl,
       bytes: buffer.length, found: result.found, detail: result.detail, regions: result.regions,
       elapsedMs: Date.now() - started,
     });
     console.log(
-      `Image analyzed - jobId: ${job.jobId}, url: ${url}, ms: ${Date.now() - started}, regions: ${result.regions}, found: ${result.found.length}`,
+      `Image analyzed - jobId: ${job.jobId}, url: ${url}, ms: ${Date.now() - started}, regions: ${result.regions}, found: ${result.found.length}, reusedFrom: ${reusedFromImageUrl || "none"}`,
     );
   }
 
@@ -355,6 +361,8 @@ async function runVisionJob(job: Job, attemptId: string) {
   const skippedNames = (job.names || []).filter(name => !names.includes(name));
   const matches = [];
   let fetched = 0;
+  const cfg = loadConfig();
+  const analyzed = new JobImageCache<Awaited<ReturnType<typeof analyzeNamedImage>>>();
   for (const [imageIndex, url] of job.imageUrls.entries()) {
     const imageRef = { mode: "worker" as const, kind: "image" as const, workerId: WORKER_ID,
       attemptId, jobId: job.jobId, postUrl: job.postUrl, imageIndex, imageUrl: url };
@@ -377,15 +385,18 @@ async function runVisionJob(job: Job, attemptId: string) {
     const started = Date.now();
     const imageSha256 = nodeCrypto.createHash("sha256").update(buffer).digest("hex");
     let result;
+    let reusedFromImageUrl: string | undefined;
     try {
-      result = await analyzeNamedImage(buffer, names, loadConfig());
+      ({ result, reusedFromImageUrl } = await analyzed.getOrAnalyze(
+        imageSha256, url, () => analyzeNamedImage(buffer, names, cfg),
+      ));
     } catch (e: any) {
       appendAnalysisLog({ event: "image_result", ...imageRef, status: "analysis_failed", imageSha256, error: e.message });
       throw e;
     }
     matches.push(...result.map(match => ({ ...match, imageUrl: url })));
-    appendAnalysisLog({ event: "image_result", ...imageRef, status: "analyzed", imageSha256,
-      bytes: buffer.length, names, matches: result, elapsedMs: Date.now() - started });
+    appendAnalysisLog({ event: "image_result", ...imageRef, status: reusedFromImageUrl ? "reused" : "analyzed", imageSha256,
+      reusedFromImageUrl, bytes: buffer.length, names, matches: result, elapsedMs: Date.now() - started });
   }
   const error = names.length > 0 && fetched === 0 ? `none of ${job.imageUrls.length} images could be fetched` : null;
   return { found: [...new Set(matches.map(match => match.name))], regions: 0, error, matches, skippedNames };
