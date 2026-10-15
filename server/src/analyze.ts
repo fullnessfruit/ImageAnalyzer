@@ -19,6 +19,7 @@ import {
   alignFace,
   extractFaceEmbedding,
   faceQualityOk,
+  MIN_FACE_SIZE,
   extractCcipEmbedding,
   runTagger,
   cropRegion,
@@ -35,8 +36,8 @@ export interface Config {
    * face는 "실물"로 인정하는 값, faceWeak는 그 아래 보고만 하는 하한이다.
    * 사진 속 사진처럼 화질이 열화된 동일 인물은 두 값 사이에 떨어진다.
    */
-  similarityThreshold: { face: number; faceWeak: number; character: number; costume: number };
-  margin: { face: number; character: number; costume: number };
+  similarityThreshold: { face: number; faceWeak: number; facePose: number; character: number; costume: number };
+  margin: { face: number; facePose: number; character: number; costume: number };
   ocr: { scoreThreshold: number; detScales: number[] };
   wdTagger: { characterTagThreshold: number };
   /**
@@ -58,8 +59,8 @@ export interface Config {
  * ArcFace에서 0.8 같은 값은 동일 인물조차 전부 기각한다.
  */
 export const DEFAULT_CONFIG: Config = {
-  similarityThreshold: { face: 0.45, faceWeak: 0.28, character: 0.82, costume: 0.52 },
-  margin: { face: 0.06, character: 0.04, costume: 0.05 },
+  similarityThreshold: { face: 0.45, faceWeak: 0.28, facePose: 0.5, character: 0.82, costume: 0.52 },
+  margin: { face: 0.06, facePose: 0.3, character: 0.04, costume: 0.05 },
   ocr: { scoreThreshold: 0.5, detScales: [960, 1600] },
   wdTagger: { characterTagThreshold: 0.6 },
   characterAliases: {},
@@ -107,13 +108,21 @@ async function recognizeFaces(
   const weak: Match[] = [];
 
   for (const det of faces) {
-    if (!det.landmarks || !faceQualityOk(det)) continue;
+    if (!det.landmarks || det.box[2] < MIN_FACE_SIZE || det.box[3] < MIN_FACE_SIZE) continue;
+    const extremePose = !faceQualityOk(det);
 
     const embedding = await extractFaceEmbedding(alignFace(raw, det.landmarks));
     if (!embedding) continue;
 
-    // 하한으로 한 번만 매칭하고 점수로 두 단계를 가른다. 두 번 돌릴 필요가 없다.
-    const best = matchGallery(embedding, gallery, cfg.similarityThreshold.faceWeak, cfg.margin.face, "face");
+    // 측면·하향 얼굴은 5점 정합이 불안정하므로 더 높은 점수와 큰 신원 간격을 요구한다.
+    // 작은 얼굴은 이 예외로 통과시키지 않는다.
+    const best = matchGallery(
+      embedding,
+      gallery,
+      extremePose ? cfg.similarityThreshold.facePose : cfg.similarityThreshold.faceWeak,
+      extremePose ? cfg.margin.facePose : cfg.margin.face,
+      extremePose ? "face-pose" : "face",
+    );
     if (!best) continue;
 
     const match: Match = {
@@ -121,7 +130,13 @@ async function recognizeFaces(
       score: +best.score.toFixed(4),
       margin: +best.margin.toFixed(4),
       box: det.box.map(Math.round) as Box,
+      source: extremePose ? "arcface-pose" : undefined,
     };
+    if (extremePose) {
+      // 등록기가 거르는 포즈다. 강한 증거가 있을 때 보고하되 갤러리 후보로 수집하지 않는다.
+      strong.push(match);
+      continue;
+    }
     if (best.score >= cfg.similarityThreshold.face) {
       strong.push(match);
       // 확정된 것만 후보로 모은다. 등록 시 SCRFD가 다시 얼굴을 찾아야 하므로

@@ -2,11 +2,13 @@
   "similarityThreshold": {
     "face": 0.45,
     "faceWeak": 0.28,
+    "facePose": 0.5,
     "character": 0.82,
     "costume": 0.52
   },
   "margin": {
     "face": 0.06,
+    "facePose": 0.3,
     "character": 0.04,
     "costume": 0.05
   },

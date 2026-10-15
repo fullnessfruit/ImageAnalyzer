@@ -110,6 +110,8 @@ ArcFace 코사인과 CCIP 코사인과 태그 벡터 코사인은 서로 다른 
 
 - **face 0.45 / faceWeak 0.28** - 실물과 사진 속 사진을 가르는 2단 구조(아래 참조).
   0.8 같은 값은 동일 인물조차 전부 기각한다.
+- **facePose 0.5 / margin 0.3** - 40px 이상이지만 랜드마크 기하 때문에 품질 검사에서
+  탈락한 측면·하향 얼굴에만 적용한다. 정면의 약한 점수를 이 기준으로 승격하지 않는다.
 - **character(CCIP) 0.82** - `ccip_onnx`의 `metrics.json`이 제시한 거리 임계값 0.1785에 대응.
   다른 애니 캐릭터로 만든 음성 사례는 아직 측정하지 못했다.
 
@@ -121,6 +123,13 @@ ArcFace 코사인과 CCIP 코사인과 태그 벡터 코사인은 서로 다른 
 - `facesWeak`: `faceWeak`(0.28) 이상 `face` 미만. 사진 속 사진·저화질뿐 아니라
   학습 참조와 포즈가 다른 선명한 얼굴도 여기에 올 수 있으므로 자동 판정에 쓰면 안 된다.
 - `faceWeak` 미만: 보고하지 않는다.
+
+측면·하향 얼굴은 일반 2단 경로와 분리한다. 작은 얼굴은 여전히 제외하고, 크기는 충분하지만
+`faceQualityOk()`가 랜드마크 기하 때문에 거른 얼굴만 ArcFace 점수 0.5와 1·2위 마진 0.3을
+모두 넘으면 `faces`에 `source: arcface-pose`로 보고한다. 등록기는 여전히 이런 포즈를
+받지 않으며 분석 중 후보로도 모으지 않는다. 새 기준은 라벨 샘플의 측면·하향 양성 2장과
+로컬 샘플 52장의 탈락 얼굴을 대조해 정한 보수적인 값이며, 다른 인물의 측면 사진으로
+추가 검증해야 한다.
 
 실측: 같은 이미지에서 실물 0.7854 → `faces`, 액자 속 사진 0.3221 → `facesWeak`,
 다른 인물 0.1474 → 미보고.
@@ -219,7 +228,7 @@ ArcFace / CCIP / 태그 벡터는 차원도 기하도 다르다. 섞어서 코�
   ├─ OCR: raw 디코딩 1회 → DBNet 다중 스케일 검출 → 줄 병합 → 스트립 생성
   │        → 표현 가능한 모델별 배치 인식([T,C] 확률 격자) → 검색어별 CTC 격자 스코어링
   ├─ 검출: SCRFD(실사 얼굴+랜드마크) / 애니 얼굴 / 애니 인물  (병렬)
-  ├─ 실사 인물: 품질 게이트 → 5점 유사변환 정합 → ArcFace(flip TTA) → 갤러리 매칭
+  ├─ 실사 인물: 최소 크기 → 포즈 분기 → 5점 유사변환 정합 → ArcFace(flip TTA) → 갤러리 매칭
   ├─ 캐릭터: 인물 영역 → CCIP 임베딩 → 갤러리 매칭; 기각 시 WD-Tagger 태그를 검토용으로 보고
   └─ 의상: 인물 영역 → 머리 마스킹 → WD-Tagger 의류 태그 벡터 → 갤러리 매칭
 → JSON
@@ -307,8 +316,8 @@ ImageAnalyzer 음성의 **불일치**이지 정답 자료가 아니므로 이미
 ### config.json
 ```json
 {
-  "similarityThreshold": { "face": 0.45, "faceWeak": 0.28, "character": 0.82, "costume": 0.52 },
-  "margin":              { "face": 0.06, "character": 0.04, "costume": 0.05 },
+  "similarityThreshold": { "face": 0.45, "faceWeak": 0.28, "facePose": 0.5, "character": 0.82, "costume": 0.52 },
+  "margin":              { "face": 0.06, "facePose": 0.3, "character": 0.04, "costume": 0.05 },
   "ocr":                 { "scoreThreshold": 0.5, "detScales": [960, 1600] },
   "wdTagger":            { "characterTagThreshold": 0.6 },
   "characterAliases":    { "uehara_ayumu": "上原歩夢" },
@@ -390,6 +399,20 @@ ImageAnalyzer 음성의 **불일치**이지 정답 자료가 아니므로 이미
 실제 `アクリル`도 있어서 그 단어가 이미지 어딘가에 있다는 이유만으로 `あぐり`를 전역
 제외하면 참양성까지 버린다. 반증은 반드시 같은 텍스트 스트립의 가까운 위치에서 한다.
 
+`sample-labels.json`은 `sample/` 루트의 실사 얼굴·OCR 정답을 파일명으로 연결한다. 등록된
+얼굴 이름만 `faces`에 넣고, 사진에 있으나 아직 갤러리에 없는 사람은 `unregisteredFaces`에
+기록한다. 얼굴이 가려져 신체 인식 연구용인 이미지는 `bodyOnly`로 분리해 현행 얼굴 판정의
+정답/오답에 넣지 않는다. `optionalOcr`는 실제로 적혀 있으나 검출 실패가 허용되는 검색어다.
+이 라벨은 `sample/`이 Git에서 제외되어도 유지되며 실제 이미지가 없는 환경에서는 검사를
+실행할 수 없다.
+현재 기본 OCR에서 `HEs7NneaoAAz0b-.jpg`의 기울어진 `絵森彩`·`坂倉花`와
+`HM3BnxtawAEfEc6.png`의 작은 `上原歩夢`·줄바꿈된 `Uehara Ayumu`가 빠진다.
+앞 사진은 원본을 25도 회전하면 두 이름 모두 약 0.998로 읽히고, 뒤 사진은 5배 선확대 시
+일본어가 0.539로 기준을 넘는다. 영문은 실제로 `UEHARA`와 `AYUMU`가 다른 줄이므로
+단일 문자열은 실패하지만 TSV의 `UEHARA<TAB>AYUMU` 조건은 원본에서도 두 단어를
+각각 0.99 이상으로 찾는다. 일반 경로에 이 변환들을 무조건 추가하면 모든 미매칭 이미지의
+OCR 시간이 늘어나므로 현재는 자동 재시도하지 않는다.
+
 ### server/src/ocr-model-cache.ts
 **역할**: v5 ONNX에 남은 미사용 `p2o` initializer 경고를 원본 모델을 바꾸지 않고 제거한다.
 `prunedModelPath()`는 원본 바이트·ONNX Runtime 버전·플랫폼·아키텍처의 해시로 `models/` 안의 파생 사본 이름을 정한다. 원본이나 런타임이 바뀌면 사본을 다시 만든다.
@@ -409,8 +432,9 @@ ImageAnalyzer 음성의 **불일치**이지 정답 자료가 아니므로 이미
 - `alignFace()`: 출력 112×112 각 픽셀에서 원본을 역방향 이중선형 샘플링. `ARCFACE_TEMPLATE`은
   ArcFace 학습에 쓰인 정규 5점 배치다.
 - `extractFaceEmbedding()`: 원본과 좌우반전을 각각 임베딩해 L2 정규화 후 평균(flip TTA).
-- `faceQualityOk()`: 최소 크기, 눈 간격, 코가 두 눈 중점에서 벗어난 정도로 극단 측면 배제.
-  저품질 얼굴은 갤러리와 질의 양쪽을 오염시키므로 매칭을 시도하지 않는 편이 낫다.
+- `MIN_FACE_SIZE` / `faceQualityOk()`: 최소 크기, 눈 간격, 코가 두 눈 중점에서 벗어난
+  정도로 극단 포즈를 검사한다. 등록기는 불합격을 제외하고 질의에서는 크기만 통과한
+  극단 포즈를 더 엄격한 별도 판정으로 보낸다.
 - `runYolo()`: YOLOv8 출력이 `[1,4+nc,N]`과 `[1,N,4+nc]` 두 레이아웃으로 나올 수 있어
   **작은 축을 필드 축으로 런타임 판별**한다.
 - `extractCcipEmbedding()`: 384×384, ImageNet 정규화, 출력 768차원.
@@ -439,7 +463,9 @@ ImageAnalyzer 음성의 **불일치**이지 정답 자료가 아니므로 이미
 
 `analyzeImage()`가 검출을 먼저 병렬로 끝내고 인식 단계가 그 결과를 공유한다.
 
-- `recognizeFaces()`: `faceWeak` 하한으로 한 번만 매칭하고 점수로 `strong`/`weak`을 가른다.
+- `recognizeFaces()`: 보통 얼굴은 `faceWeak` 하한으로 한 번만 매칭하고 점수로
+  `strong`/`weak`을 가른다. 크기는 충분하지만 포즈 품질 검사에서 빠진 얼굴은
+  `facePose`와 별도 마진을 둘 다 통과할 때만 강한 결과로 보고하고 후보는 수집하지 않는다.
 - `recognizeCharacters()`: 갤러리가 비면 즉시 빈 강·약 배열을 반환한다(등록한 것만 보고).
   인물이 검출되지 않으면 이미지 전체를 하나의 영역으로 본다. 영역마다 CCIP가 확정한 이름은
   `characters`, CCIP가 기각했지만 태거가 등록 이름을 냈으면 `charactersWeak`로 분리한다.
@@ -640,6 +666,15 @@ HTTP와 같은 로그 함수로 남긴다. `mode: "cli"`로 운용 워커 기록
 `keyword-absent`는 없어야 한다. 각 이미지의 점수와 성공 여부를 한 줄씩 출력하고
 실패가 있으면 종료 코드 1을 반환한다. 알려진 음성 이미지 속 실제 `アクリル`·`めぐり`
 양성도 함께 확인해, 오검출 차단이 올바른 단어까지 지우는 일을 막는다.
+
+### scripts/check-labeled-samples.cjs
+**역할**: `npm run samples:labeled`로 `sample-labels.json`의 실사 얼굴·OCR 정답을 검사한다.
+명령 뒤에 파일명을 주면 그 사진만 재검사한다.
+`byFile()`은 사람·검색어별 파일 목록을 이미지별 기대 목록으로 뒤집어 한 이미지를 한 번만
+분석하게 한다. `main()`은 서버와 같은 모델·DB·설정을 올리고 `analyzeImage()`를 재사용한다.
+후보 수집은 끄므로 검증 사진이 갤러리 후보를 오염시키지 않는다. 등록된 얼굴의 누락·오검출과
+필수 OCR 누락은 실패로 세고, 미등록 얼굴·신체 전용·선택 OCR은 진단 결과만 출력한다.
+각 이미지의 기대값, 강·약 얼굴, OCR 점수, 검출 수와 오류를 한 줄 JSON으로 기록한다.
 
 ### scripts/tags.ts
 **역할**: WD-Tagger 원시 확률 덤프(rating/character/general 상위 20). 캐릭터 임계값 조정,
