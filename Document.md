@@ -550,7 +550,9 @@ PP-OCRv5 모델과 사전은 서로 다른 공식 저장소에 있으므로, 문
 붙여 한 행을 동기식으로 추가한다. 긴 TSV의 탭·줄바꿈은
 JSON 문자열 안에서 이스케이프되므로 `rg`로 행 단위 검색할 수 있다. 요청 기록 실패를
 조용히 삼키지 않으므로 HTTP는 실패 응답을 내고, 워커는 분석을 멈춰 job을 release하며,
-CLI도 실패를 보고한다.
+CLI도 실패를 보고한다. `summarizeAnalysisError()`는 원인 체인의 이름·메시지·시스템 오류
+코드를 최대 6단계·2,000자의 한 줄로 만든다. 순환 원인은 중단하며 워커의 로컬 오류 로그와
+브로커 release가 같은 요약을 사용한다.
 
 ### server/src/job-image-cache.ts
 **역할**: 한 브로커 job 안에서 동일한 이미지 바이트를 중복 추론하지 않는다.
@@ -619,8 +621,10 @@ NAT가 막는 건 *확장 → 노트북* 한 방향이라, 노트북이 브로�
 **실패 처리**
 - OCR 자체가 터지면 결과를 올리지 않고 `POST /jobs/<id>/release`로 lease만 놓는다 → 다음
   폴링에서 다시 잡힌다. 결과가 올라와야만 브로커가 job을 지우므로 유실되지 않는다. 브로커는 이
-  재시도를 job당 한 번만 허용한다 - 두 번째 release면 브로커가 에러 결과로 job을 닫고, 확장은
-  그 포스트를 포기한다
+  재시도를 job당 한 번만 허용한다. release는 `{error}`에 실제 오류와 중첩 원인 요약을
+  전달한다. 두 번째 release면 브로커가 에러 결과로 job을 닫되 image 작업의 원래 입력과
+  시도별 원인은 별도 실패 기록에 보존한다. 확장은 분석 실패를 정상 불일치와 구분한다.
+  `job_error` 행에도 같은 원인을 기록하며 감사 파일 쓰기 실패가 release를 막지는 않는다
 - 이미지를 **한 장도** 못 받으면 `error`를 실어 결과를 올리고 끝낸다. 재시도해도 같은 결과라
   job을 붙잡아 둘 이유가 없다. 일부만 받았으면 받은 만큼의 판정이 유효하므로 정상 결과로 올린다
 - 결과 업로드가 실패하면 job은 브로커에 그대로 남는다. 재시도가 곧 그 job의 재실행이다
@@ -759,6 +763,10 @@ bat/sh는 공유 키 보존과 `delete-shared-secret.bat` / `.sh`의 위치, 삭
 
 `analyzeNamedImage`는 기존 `analyzeImage`를 빈 OCR 검색 목록으로 호출하여 인물 분석만 수행한다. OCR은 독립 job이 유일하게 담당한다. 전체 갤러리 경쟁자는 confidence margin 계산에 유지하고 확정 `faces`·`characters`·`costumes` 결과 중 요청 이름만 반환한다. weak 후보나 WD 태그의 임의 별칭을 대상 이름으로 보내지 않는다.
 
-`runVisionJob`은 job의 모든 이미지를 받고 이름별 확정 결과를 합친다. 등록된 요청 이름이 없어 분석을 건너뛰는 경우에도 URL마다 요청과 `no_registered_names` 결과를 남긴다. URL 거부·다운로드 실패·분석 실패·성공도 OCR과 같은 `attemptId`·`imageIndex`로 한 줄씩 기록하고, 받은 바이트의 SHA-256을 남긴다. 모든 이미지를 못 받았을 때는 OCR 작업처럼 오류 결과를 올려 재시도 루프를 끝낸다. 브로커 결과는 `found`(확정 이름), `matches`(kind·score·imageUrl 등), `skippedNames`다. image job은 브로커 접수 후 1시간, result는 완료 후 1시간에 입출력 시 만료되며 OCR의 24시간 정책은 그대로다. 워커가 꺼져 있거나 OCR-only여도 추가 모드가 자동 활성화되지 않는다. 브로커·VoiceAnalyzer와 같은 `OCR_BROKER_SECRET`을 사용하며 별도 생존 신호는 없다.
+`runVisionJob`은 job의 모든 이미지를 받고 이름별 확정 결과를 합친다. 등록된 요청 이름이 없어 분석을 건너뛰는 경우에도 URL마다 요청과 `no_registered_names` 결과를 남긴다. URL 거부·다운로드 실패·분석 실패·성공도 OCR과 같은 `attemptId`·`imageIndex`로 한 줄씩 기록하고, 받은 바이트의 SHA-256을 남긴다. 모든 이미지를 못 받았을 때는 OCR 작업처럼 오류 결과를 올려 재시도 루프를 끝낸다. 브로커 결과는 `found`(확정 이름), `matches`(kind·score·imageUrl 등), `skippedNames`,
+`warnings`다. 거부된 URL과 두 번 모두 다운로드하지 못한 URL은 원인과 함께 `warnings`에
+남기므로 일부 이미지의 정상 불일치가 포스트 전체의 검증된 불일치로 소비되지 않는다.
+다른 이미지의 유효 매치는 유지하며 확장과 브로커가 부분 실패를 별도로 보존한다.
+OCR의 일부 다운로드 실패 처리와 기존 1회 다운로드 재시도 정책은 유지한다. image job은 브로커 접수 후 1시간, result는 완료 후 1시간에 입출력 시 만료되며 OCR의 24시간 정책은 그대로다. 워커가 꺼져 있거나 OCR-only여도 추가 모드가 자동 활성화되지 않는다. 브로커·VoiceAnalyzer와 같은 `OCR_BROKER_SECRET`을 사용하며 별도 생존 신호는 없다.
 
 `fetchImageOnce`는 처음 URL과 최대 5회 리다이렉트를 pbs.twimg.com HTTPS·기본 포트·자격증명 없음으로 검사한다. 60초 제한과 스트리밍 32MiB 상한을 적용하고 끝날 때 reader를 닫는다. 허용하지 않는 주소를 HTTP 클라이언트가 먼저 방문하게 하지 않는다. 기존 `fetchImage`의 1회 재시도와 OCR 처리 방식은 유지한다.

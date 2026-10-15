@@ -36,7 +36,7 @@ import { promisify } from "util";
 import { ensureModelsDownloaded } from "./model-downloader";
 import { initOCR, parseSearchLists, parseKeywordBlocks, performOCR, KeywordBlock } from "./ocr";
 import { loadConfig, PROJECT_ROOT } from "./config";
-import { appendAnalysisLog } from "./analysis-log";
+import { appendAnalysisLog, summarizeAnalysisError } from "./analysis-log";
 import { JobImageCache } from "./job-image-cache";
 
 const execFileAsync = promisify(execFile);
@@ -251,7 +251,7 @@ async function fetchImageOnce(url: string): Promise<Buffer> {
  * 두 번 다 실패하면 그 이미지만 버린다 - 한 장 때문에 포스트 전체의 OCR을 잃지 않는다.
  * 확장의 OpenAIClient.fetchImageAsDataUrl도 같은 이유로 같은 규칙을 쓴다.
  */
-async function fetchImage(url: string): Promise<Buffer | null> {
+async function fetchImage(url: string, onFailure?: (error: string) => void): Promise<Buffer | null> {
   try {
     return await fetchImageOnce(url);
   } catch (first: any) {
@@ -262,7 +262,8 @@ async function fetchImage(url: string): Promise<Buffer | null> {
   try {
     return await fetchImageOnce(url);
   } catch (second: any) {
-    const reason = second.name === "AbortError" ? "timeout" : second.message;
+    const reason = summarizeAnalysisError(second);
+    onFailure?.(reason);
     console.warn(`Image fetch failed twice, skipping this image - url: ${url}, error: ${reason}`);
     return null;
   }
@@ -360,6 +361,7 @@ async function runVisionJob(job: Job, attemptId: string) {
   const names = availableNames(job.names || []);
   const skippedNames = (job.names || []).filter(name => !names.includes(name));
   const matches = [];
+  const warnings: string[] = [];
   let fetched = 0;
   const cfg = loadConfig();
   const analyzed = new JobImageCache<Awaited<ReturnType<typeof analyzeNamedImage>>>();
@@ -373,12 +375,15 @@ async function runVisionJob(job: Job, attemptId: string) {
     }
     if (!isAllowedImageUrl(url)) {
       console.warn(`Image URL rejected - jobId: ${job.jobId}, url: ${url} (허용 호스트: ${[...ALLOWED_IMAGE_HOSTS].join(", ")})`);
+      warnings.push(`image URL rejected: ${url}`);
       appendAnalysisLog({ event: "image_result", ...imageRef, status: "rejected_url" });
       continue;
     }
-    const buffer = await fetchImage(url);
+    let fetchError = "image fetch failed";
+    const buffer = await fetchImage(url, error => { fetchError = error; });
     if (!buffer) {
-      appendAnalysisLog({ event: "image_result", ...imageRef, status: "fetch_failed" });
+      warnings.push(`${url}: ${fetchError}`);
+      appendAnalysisLog({ event: "image_result", ...imageRef, status: "fetch_failed", error: fetchError });
       continue;
     }
     fetched++;
@@ -391,7 +396,7 @@ async function runVisionJob(job: Job, attemptId: string) {
         imageSha256, url, () => analyzeNamedImage(buffer, names, cfg),
       ));
     } catch (e: any) {
-      appendAnalysisLog({ event: "image_result", ...imageRef, status: "analysis_failed", imageSha256, error: e.message });
+      appendAnalysisLog({ event: "image_result", ...imageRef, status: "analysis_failed", imageSha256, error: summarizeAnalysisError(e) });
       throw e;
     }
     matches.push(...result.map(match => ({ ...match, imageUrl: url })));
@@ -399,7 +404,7 @@ async function runVisionJob(job: Job, attemptId: string) {
       reusedFromImageUrl, bytes: buffer.length, names, matches: result, elapsedMs: Date.now() - started });
   }
   const error = names.length > 0 && fetched === 0 ? `none of ${job.imageUrls.length} images could be fetched` : null;
-  return { found: [...new Set(matches.map(match => match.name))], regions: 0, error, matches, skippedNames };
+  return { found: [...new Set(matches.map(match => match.name))], regions: 0, error, matches, skippedNames, warnings };
 }
 
 async function tick(): Promise<void> {
@@ -425,11 +430,21 @@ async function tick(): Promise<void> {
       });
     } catch (e: any) {
       // OCR 자체가 터진 경우. 결과를 올리지 않고 lease를 놓아 다음에 다시 잡히게 한다.
-      console.error(`Job failed - jobId: ${job.jobId}, error: ${e.message}`);
+      const error = summarizeAnalysisError(e);
+      console.error(`Job failed - jobId: ${job.jobId}, error: ${error}`);
       try {
-        await brokerFetch(`/jobs/${encodeURIComponent(job.jobId)}/release`, { method: "POST" });
+        appendAnalysisLog({ event: "job_error", mode: "worker", workerId: WORKER_ID, attemptId,
+          jobId: job.jobId, postUrl: job.postUrl, kind: job.kind || "ocr", error });
+      } catch (logError) {
+        // An audit write failure must not prevent the broker from receiving the cause.
+        console.error(`Error audit failed - jobId: ${job.jobId}, error: ${summarizeAnalysisError(logError)}`);
+      }
+      try {
+        await brokerFetch(`/jobs/${encodeURIComponent(job.jobId)}/release`, {
+          method: "POST", body: JSON.stringify({ error }),
+        });
       } catch (releaseErr: any) {
-        console.warn(`Release failed - jobId: ${job.jobId}, error: ${releaseErr.message}`);
+        console.warn(`Release failed - jobId: ${job.jobId}, error: ${summarizeAnalysisError(releaseErr)}`);
       }
       return;
     }
