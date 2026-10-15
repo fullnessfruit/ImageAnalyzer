@@ -899,12 +899,10 @@ export async function performOCR(
 ): Promise<OcrResult> {
   const empty: OcrResult = { found: [], matchedKeywords: [], detail: [], regions: 0 };
 
+  // 이미지 신원 분석은 검색 목록 없이 이 공통 경로를 호출한다. OCR 요청 누락은 호출자가 판정한다.
+  if (searchLists.length === 0) return empty;
   if (!isOcrReady()) {
     console.log(`[ocr] SKIP - det: ${!!detSession}, rec: ${recModels.size}`);
-    return empty;
-  }
-  if (searchLists.length === 0) {
-    console.log(`[ocr] SKIP - searchLists is empty (searchStrings.tsv를 확인하라)`);
     return empty;
   }
 
