@@ -161,15 +161,17 @@ export interface Detection {
   landmarks?: number[];
 }
 
-export async function cropRegion(imageBuffer: Buffer, box: Box): Promise<Buffer> {
-  const meta = await sharp(imageBuffer).metadata();
-  const imgW = meta.width!;
-  const imgH = meta.height!;
+function cropRectangle(box: Box, imgW: number, imgH: number): { left: number; top: number; width: number; height: number } {
   const left = Math.max(0, Math.min(Math.round(box[0]), imgW - 1));
   const top = Math.max(0, Math.min(Math.round(box[1]), imgH - 1));
   const width = Math.max(1, Math.min(Math.round(box[2]), imgW - left));
   const height = Math.max(1, Math.min(Math.round(box[3]), imgH - top));
-  return sharp(imageBuffer).extract({ left, top, width, height }).toBuffer();
+  return { left, top, width, height };
+}
+
+export async function cropRegion(imageBuffer: Buffer, box: Box): Promise<Buffer> {
+  const meta = await sharp(imageBuffer).metadata();
+  return sharp(imageBuffer).extract(cropRectangle(box, meta.width!, meta.height!)).toBuffer();
 }
 
 /**
@@ -179,8 +181,9 @@ export async function cropRegion(imageBuffer: Buffer, box: Box): Promise<Buffer>
  * 머리카락까지 덮도록 얼굴 위쪽에 높이의 60%를 더 확장한다.
  */
 export async function cropWithMask(imageBuffer: Buffer, box: Box, maskBoxes: Box[]): Promise<Buffer> {
-  const [bx, by, bw, bh] = box.map(Math.round) as Box;
-  const cropped = await cropRegion(imageBuffer, box);
+  const meta = await sharp(imageBuffer).metadata();
+  const { left: bx, top: by, width: bw, height: bh } = cropRectangle(box, meta.width!, meta.height!);
+  const cropped = await sharp(imageBuffer).extract({ left: bx, top: by, width: bw, height: bh }).toBuffer();
 
   const overlays: sharp.OverlayOptions[] = [];
   for (const m of maskBoxes) {
