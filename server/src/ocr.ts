@@ -229,27 +229,33 @@ function fromRaw(src: RawSrc): sharp.Sharp {
   return sharp(src.buf, { raw: { width: src.width, height: src.height, channels: 3 } });
 }
 
-/** 작은 카드의 글자는 원본 크기 DBNet에서 사라진다. 겹치는 타일은 줄이 경계에 걸리지 않게 한다. */
+/** 보통 비율의 작은 이미지는 내용과 무관하게 확대한다. 타일은 경계에서 겹치게 한다. */
 const SMALL_IMAGE_MAX_SIDE = 500;
+const SMALL_IMAGE_MAX_ASPECT_RATIO = 3;
 const SMALL_IMAGE_TILE_FRACTION = 0.6;
-const SMALL_IMAGE_TILE_SCALE = 4;
+const SMALL_IMAGE_SCALE = 4;
+
+async function enlargeRaw(src: RawSrc): Promise<RawSrc> {
+  const width = src.width * SMALL_IMAGE_SCALE;
+  const height = src.height * SMALL_IMAGE_SCALE;
+  const buf = await fromRaw(src).resize(width, height, { fit: "fill" }).raw().toBuffer();
+  return { buf, width, height };
+}
 
 async function enlargedSmallImageTiles(src: RawSrc): Promise<RawSrc[]> {
-  if (Math.max(src.width, src.height) > SMALL_IMAGE_MAX_SIDE || Math.min(src.width, src.height) < 120) return [];
+  const longSide = Math.max(src.width, src.height);
+  const shortSide = Math.min(src.width, src.height);
+  if (longSide > SMALL_IMAGE_MAX_SIDE || longSide / shortSide >= SMALL_IMAGE_MAX_ASPECT_RATIO) return [];
 
   const tileWidth = Math.ceil(src.width * SMALL_IMAGE_TILE_FRACTION);
   const tileHeight = Math.ceil(src.height * SMALL_IMAGE_TILE_FRACTION);
   const tiles: RawSrc[] = [];
-  for (const top of [0, src.height - tileHeight]) {
-    for (const left of [0, src.width - tileWidth]) {
+  for (const top of new Set([0, src.height - tileHeight])) {
+    for (const left of new Set([0, src.width - tileWidth])) {
       // sharp는 extract/resize를 한 파이프라인에서 요청 순서대로 실행하지 않을 수 있다.
       // 원본 좌표에서 먼저 잘라 별도 raw 파이프라인으로 확대한 뒤 검출한다.
       const cropped = await fromRaw(src).extract({ left, top, width: tileWidth, height: tileHeight }).raw().toBuffer();
-      const width = tileWidth * SMALL_IMAGE_TILE_SCALE;
-      const height = tileHeight * SMALL_IMAGE_TILE_SCALE;
-      const buf = await sharp(cropped, { raw: { width: tileWidth, height: tileHeight, channels: 3 } })
-        .resize(width, height, { fit: "fill" }).raw().toBuffer();
-      tiles.push({ buf, width, height });
+      tiles.push(await enlargeRaw({ buf: cropped, width: tileWidth, height: tileHeight }));
     }
   }
   return tiles;
