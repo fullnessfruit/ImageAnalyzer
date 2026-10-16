@@ -51,12 +51,16 @@ function loadSampleLabels() {
     }
     for (const term of uniqueNames(entry.ocr || [], `${file}.ocr`)) seenOcr.add(term);
     for (const term of uniqueNames(entry.optionalOcr || [], `${file}.optionalOcr`)) seenOcr.add(term);
+    for (const term of uniqueNames(entry.absentOcr || [], `${file}.absentOcr`)) {
+      if ([...(entry.ocr || []), ...(entry.optionalOcr || [])].includes(term)) throw new Error(`OCR term both present and absent: ${file} ${term}`);
+    }
     if (entry.ocrText) for (const term of Object.keys(entry.ocrText)) {
       if (![...(entry.ocr || []), ...(entry.optionalOcr || [])].includes(term)) throw new Error(`OCR text without query: ${file} ${term}`);
     }
     if (entry.subjectNotes) for (const name of Object.keys(entry.subjectNotes)) {
       if (![...entryPeople, ...entryCharacters].includes(name)) throw new Error(`Note without subject: ${file} ${name}`);
     }
+    if (entry.imageNotes !== undefined && (typeof entry.imageNotes !== "string" || !entry.imageNotes.trim())) throw new Error(`Invalid image notes: ${file}`);
     if (entry.faceCheck && entry.faceCheck !== "skip") throw new Error(`Unknown face check mode: ${file}`);
     if (entry.absent) {
       if (entry.absent !== "allCatalogedSubjects" || entryPeople.length || entryCharacters.length) throw new Error(`Invalid absence label: ${file}`);

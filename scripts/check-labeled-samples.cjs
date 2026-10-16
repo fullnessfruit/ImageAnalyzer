@@ -33,7 +33,8 @@ async function main() {
     const expectedCharacters = label.characters || [];
     const expectedOcr = label.ocr || [];
     const optional = label.optionalOcr || [];
-    const terms = [...new Set([...expectedOcr, ...optional])];
+    const absentOcr = label.absentOcr || [];
+    const terms = [...new Set([...expectedOcr, ...optional, ...absentOcr])];
     const errors = [];
     try {
       const image = fs.readFileSync(imagePath);
@@ -48,7 +49,8 @@ async function main() {
         for (const name of foundFaces) if (!expectedFaces.includes(name)) errors.push(`unexpected face: ${name}`);
       }
       for (const term of expectedOcr) if (!result.ocr.found.includes(term)) errors.push(`OCR missing: ${term}`);
-      console.log(`Labeled sample - ${JSON.stringify({ file, label, faces: result.faces, facesWeak: result.facesWeak, characters: result.characters, charactersWeak: result.charactersWeak, missingLabeledCharacters: expectedCharacters.filter(name => !foundCharacters.includes(name)), ocr: terms.map(term => ({ term, required: expectedOcr.includes(term), found: result.ocr.found.includes(term), score: result.ocr.detail.find(item => item.list === term)?.parts[0]?.score ?? 0 })), detections: result._detections, elapsedMs: result._elapsedMs, errors })}`);
+      for (const term of absentOcr) if (result.ocr.found.includes(term)) errors.push(`unexpected OCR: ${term}`);
+      console.log(`Labeled sample - ${JSON.stringify({ file, label, faces: result.faces, facesWeak: result.facesWeak, characters: result.characters, charactersWeak: result.charactersWeak, missingLabeledCharacters: expectedCharacters.filter(name => !foundCharacters.includes(name)), ocr: terms.map(term => ({ term, required: expectedOcr.includes(term), forbidden: absentOcr.includes(term), found: result.ocr.found.includes(term), score: result.ocr.detail.find(item => item.list === term)?.parts[0]?.score ?? 0 })), detections: result._detections, elapsedMs: result._elapsedMs, errors })}`);
     } catch (error) {
       errors.push(error.message);
       console.error(`Labeled sample failed - ${JSON.stringify({ file, errors })}`);
