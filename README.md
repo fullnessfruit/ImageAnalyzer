@@ -84,8 +84,9 @@ Models (~815 MiB) download automatically on first run.
 `sample/keyword-present/<keyword>/` contains images where the keyword is visibly present;
 `sample/keyword-absent/<keyword>/` contains images where it is absent. These names describe
 ground truth, not what the OCR happened to report. Run `npm run ocr:samples` to check the
-local images with the real OCR models. `sample/` is ignored by Git, so this check requires
-the local sample images.
+local images with the real OCR models. The sample images are ignored by Git, so this check
+requires local image files. File-by-file labels for people, characters, OCR and known-absent
+subjects are in `sample/labels.json`; run `npm run samples:labels` to validate their inventory.
 
 ### OCR only
 
@@ -255,8 +256,11 @@ regression checks.
 
 Delete `db/embeddings.db` and re-run `npm run register:all`.
 
+## Moving the local gallery to another computer
 
-### Named image jobs
+Git tracks the code, `config.json`, `searchStrings.tsv`, and the sample label documents, but ignores the actual gallery and sample images. Copy `data/` for approved face/character/costume references and pending candidate crops, `db/` for the current registered embeddings and candidate records, and `sample/` if the labeled regression images should be available on the new computer. Stop the server and workers before copying the SQLite database. Copy `models/` if the new computer must run offline or preserve local experiments; otherwise the runtime models are downloaded again. Copy `log/` only if the previous machine's analysis history is needed. When bringing only `data/`, run `npm run register:all` to rebuild approved embeddings, but the separate candidate database records will not be reconstructed from crop files. The broker shared secret is stored outside this repository and must be configured separately on the new machine.
+
+## Named image jobs
 
 `npm run worker -- --all` requests OCR and image jobs together and processes one at a time in the broker's oldest-post-first order (receipt time when post time is absent). It does not alternate job kinds. Plain `npm run worker`, `--ocr-only`, or `IMAGEANALYZER_OCR_ONLY=1` consumes only OCR. Image jobs match only requested registered folder names; unknown names are reported in `skippedNames` and weak candidates never trigger an alert. Empty target lists do not run vision inference. The extension handles delivery and deduplication.
 

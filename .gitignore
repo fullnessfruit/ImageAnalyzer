@@ -168,8 +168,10 @@ data/faces/*
 # Crops collected during analysis, pending review (npm run candidates)
 data/_candidates/
 
-# Local test images (third-party material, not for distribution)
-sample/
+# Local test images (third-party material, not for distribution); keep labels in Git
+sample/*
+!sample/labels.json
+!sample/README.md
 
 # Project-specific
 git-config.bat
