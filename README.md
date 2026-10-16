@@ -84,8 +84,9 @@ Models (~815 MiB) download automatically on first run.
 `sample/keyword-present/<keyword>/` contains images where the keyword is visibly present;
 `sample/keyword-absent/<keyword>/` contains images where it is absent. These names describe
 ground truth, not what the OCR happened to report. Run `npm run ocr:samples` to check the
-local images with the real OCR models. `sample/` is ignored by Git, so this check requires
-the local sample images.
+local images with the real OCR models. The sample images are ignored by Git, so this check
+requires local image files. File-by-file labels for people, characters, OCR and known-absent
+subjects are in `sample/labels.json`; run `npm run samples:labels` to validate their inventory.
 
 ### OCR only
 

@@ -1,0 +1,664 @@
+{
+  "format": "imageanalyzer-sample-labels-v2",
+  "subjectCatalog": {
+    "people": [
+      "茜屋日海夏",
+      "伊達さゆり",
+      "遠藤璃菜",
+      "花岩香奈",
+      "絵森彩",
+      "久保田未夢",
+      "内田秀",
+      "降幡愛",
+      "高尾奏音",
+      "高木美佑",
+      "坂倉花",
+      "相良茉優",
+      "三宅美羽",
+      "小戸森穂花",
+      "青山なぎさ",
+      "村山結香",
+      "村上奈津実",
+      "大熊和奏",
+      "大西亜玖璃",
+      "堀内まり菜",
+      "矢野妃菜喜",
+      "林鼓子",
+      "鈴原希実",
+      "楡井希実"
+    ],
+    "characters": [
+      "ウィーン・マルガレーテ",
+      "エマ・ヴェルデ",
+      "ダリア・クロイツ",
+      "ミア・テイラー",
+      "絢瀬絵里",
+      "碓氷白雪",
+      "園田海未",
+      "黄宮向日葵",
+      "鬼塚夏美",
+      "鬼塚冬毬",
+      "宮下愛",
+      "近江彼方",
+      "高海千歌",
+      "高橋ポルカ",
+      "高坂穂乃果",
+      "高咲侑",
+      "国木田花丸",
+      "黒澤ダイヤ",
+      "黒澤ルビィ",
+      "桜坂しずく",
+      "桜小路 な子",
+      "桜内梨子",
+      "三船栞子",
+      "紫陽琴花",
+      "若菜四季",
+      "小原鞠莉",
+      "小泉花陽",
+      "松浦果南",
+      "鐘嵐珠",
+      "上原歩夢",
+      "星空凛",
+      "西木野真姫",
+      "中須かすみ",
+      "朝香果林",
+      "津島善子",
+      "天王寺璃奈",
+      "渡辺曜",
+      "唐可可",
+      "東條希",
+      "南ことり",
+      "日野下花帆",
+      "平安名すみれ",
+      "米女メイ",
+      "矢澤にこ",
+      "優木せつ菜",
+      "葉月恋",
+      "嵐千砂都",
+      "澁谷かのん",
+      "薔薇ヶ崎あかね"
+    ]
+  },
+  "absenceScope": "allCatalogedSubjects means every person and character explicitly named in subjectCatalog is absent; it does not assert the image contains no other person, character, or OCR text.",
+  "trainingMedia": {
+    "data/characters/上原歩夢/d_2_mascot_img_1.webp": {
+      "subject": "上原歩夢",
+      "presentation": "인형 사진"
+    },
+    "data/characters/上原歩夢/e_2_acrylicstand_img_1.webp": {
+      "subject": "上原歩夢",
+      "presentation": "굿즈에 인쇄된 데포르메 일러스트"
+    },
+    "data/characters/上原歩夢/UMq2SVnrtcL8Cl7Q.jpeg": {
+      "subject": "上原歩夢",
+      "presentation": "피규어 사진"
+    }
+  },
+  "images": {
+    "01a.jpg": {
+      "characters": [
+        "上原歩夢",
+        "高咲侑"
+      ]
+    },
+    "1500x500.jpg": {
+      "people": [
+        "大西亜玖璃",
+        "高尾奏音"
+      ]
+    },
+    "c01.png": {
+      "characters": [
+        "高咲侑"
+      ]
+    },
+    "C3n74jmQvxcqi2dI.jpeg": {
+      "characters": [
+        "上原歩夢",
+        "中須かすみ",
+        "桜坂しずく",
+        "朝香果林",
+        "宮下愛",
+        "近江彼方",
+        "優木せつ菜",
+        "エマ・ヴェルデ",
+        "天王寺璃奈",
+        "三船栞子",
+        "ミア・テイラー",
+        "鐘嵐珠",
+        "高咲侑"
+      ],
+      "ocr": [
+        "虹ヶ咲"
+      ]
+    },
+    "G67t3HDbkAAcOh2.jpg": {
+      "people": [
+        "大西亜玖璃"
+      ],
+      "faceChecks": [
+        "大西亜玖璃"
+      ],
+      "subjectNotes": {
+        "大西亜玖璃": "옆얼굴"
+      }
+    },
+    "G67t3HFbkAAjrcz.jpg": {
+      "people": [
+        "大西亜玖璃"
+      ],
+      "faceChecks": [
+        "大西亜玖璃"
+      ]
+    },
+    "G67t3HHbkAIKHTZ.jpg": {
+      "people": [
+        "大西亜玖璃"
+      ],
+      "faceCheck": "skip",
+      "subjectNotes": {
+        "大西亜玖璃": "얼굴이 거의 보이지 않아 몸으로 신원을 추정하는 시험 사진. 현행 얼굴 판정의 필수 성공 대상이 아님."
+      }
+    },
+    "G67t3HHbkAQlVec.jpg": {
+      "people": [
+        "大西亜玖璃"
+      ],
+      "faceChecks": [
+        "大西亜玖璃"
+      ]
+    },
+    "G90_B4KasAAIXUQ.jpg": {
+      "people": [
+        "大西亜玖璃",
+        "矢野妃菜喜"
+      ],
+      "faceChecks": [
+        "大西亜玖璃"
+      ],
+      "ocr": [
+        "大西亜玖璃",
+        "矢野妃菜喜"
+      ]
+    },
+    "GPEWXlGacAEbFX_.jpg": {
+      "people": [
+        "伊達さゆり",
+        "林鼓子"
+      ]
+    },
+    "GPEWXlIaYAAo93L.jpg": {
+      "people": [
+        "伊達さゆり",
+        "林鼓子"
+      ]
+    },
+    "GwbSRalbEAEjuim.jpg": {
+      "people": [
+        "大西亜玖璃"
+      ],
+      "faceChecks": [
+        "大西亜玖璃"
+      ],
+      "ocr": [
+        "大西亜玖璃"
+      ]
+    },
+    "GxFC_2taEAAGcnS.jpg": {
+      "people": [
+        "大西亜玖璃",
+        "高尾奏音"
+      ]
+    },
+    "HCPt__racAAm5_V.jpg": {
+      "people": [
+        "楡井希実"
+      ],
+      "faceChecks": [
+        "楡井希実"
+      ]
+    },
+    "HCPt__yasAANWto.jpg": {
+      "people": [
+        "楡井希実"
+      ],
+      "faceChecks": [
+        "楡井希実"
+      ]
+    },
+    "HDMjR99aQAAsZFt.jpg": {
+      "people": [
+        "大西亜玖璃",
+        "高尾奏音"
+      ],
+      "ocr": [
+        "大西亜玖璃",
+        "高尾奏音"
+      ]
+    },
+    "HE-Cki4boAA9CH_.jpg": {
+      "people": [
+        "大西亜玖璃",
+        "降幡愛",
+        "大熊和奏"
+      ]
+    },
+    "HEa2vYIaoAEIdxf.jpg": {
+      "people": [
+        "大西亜玖璃",
+        "降幡愛",
+        "大熊和奏"
+      ]
+    },
+    "HEajikxbgAAjwhm.jpg": {
+      "people": [
+        "大西亜玖璃",
+        "降幡愛",
+        "大熊和奏",
+        "三宅美羽",
+        "遠藤璃菜"
+      ]
+    },
+    "HEs7NneaoAAz0b-.jpg": {
+      "people": [
+        "絵森彩",
+        "坂倉花"
+      ],
+      "ocr": [
+        "絵森彩",
+        "坂倉花"
+      ]
+    },
+    "HEUe9rabYAAr9ua.jpg": {
+      "people": [
+        "大西亜玖璃",
+        "高尾奏音"
+      ]
+    },
+    "HEUXF8NbYAIkAtV.jpg": {
+      "people": [
+        "大西亜玖璃",
+        "降幡愛",
+        "大熊和奏"
+      ]
+    },
+    "HEvAW_2bIAIytUw.jpg": {
+      "people": [
+        "久保田未夢",
+        "村上奈津実"
+      ]
+    },
+    "HFMLrhZasAAVHyV.jpg": {
+      "people": [
+        "鈴原希実"
+      ]
+    },
+    "HFruFbaaoAAkARg.jpg": {
+      "people": [
+        "大西亜玖璃",
+        "村上奈津実"
+      ],
+      "faceChecks": [
+        "大西亜玖璃"
+      ],
+      "ocr": [
+        "大西亜玖璃",
+        "村上奈津実"
+      ]
+    },
+    "HFruI-zbkAA0XU7.jpg": {
+      "people": [
+        "大西亜玖璃",
+        "村上奈津実"
+      ],
+      "faceChecks": [
+        "大西亜玖璃"
+      ],
+      "ocr": [
+        "大西亜玖璃",
+        "村上奈津実"
+      ]
+    },
+    "HG-AYKEbAAAVL5o.jpg": {
+      "people": [
+        "大西亜玖璃",
+        "鈴原希実",
+        "茜屋日海夏",
+        "高木美佑",
+        "花岩香奈"
+      ],
+      "faceChecks": [
+        "大西亜玖璃"
+      ],
+      "ocr": [
+        "大西亜玖璃",
+        "鈴原希実",
+        "茜屋日海夏",
+        "碓氷白雪",
+        "ダリア・クロイツ",
+        "薔薇ヶ崎あかね",
+        "紫陽琴花",
+        "黄宮向日葵"
+      ],
+      "characters": [
+        "碓氷白雪",
+        "ダリア・クロイツ",
+        "薔薇ヶ崎あかね",
+        "紫陽琴花",
+        "黄宮向日葵"
+      ]
+    },
+    "HG-Zdh2bIAA21aA.jpg": {
+      "people": [
+        "大西亜玖璃",
+        "鈴原希実"
+      ],
+      "faceChecks": [
+        "大西亜玖璃"
+      ],
+      "ocr": [
+        "大西亜玖璃",
+        "鈴原希実"
+      ]
+    },
+    "HKchRkqbMAASXom.jpg": {
+      "people": [
+        "大西亜玖璃",
+        "大熊和奏",
+        "三宅美羽",
+        "遠藤璃菜",
+        "堀内まり菜",
+        "村山結香"
+      ],
+      "faceChecks": [
+        "大西亜玖璃"
+      ]
+    },
+    "HKnZGw8acAILsLA.jpg": {
+      "people": [
+        "大西亜玖璃"
+      ],
+      "faceChecks": [
+        "大西亜玖璃"
+      ]
+    },
+    "HKnZJJmb0AAcC2n.jpg": {
+      "people": [
+        "大西亜玖璃",
+        "青山なぎさ",
+        "小戸森穂花"
+      ],
+      "faceChecks": [
+        "大西亜玖璃"
+      ],
+      "subjectNotes": {
+        "青山なぎさ": "왼쪽 위",
+        "小戸森穂花": "오른쪽 위",
+        "大西亜玖璃": "왼쪽 아래"
+      }
+    },
+    "HM3BnxtawAEfEc6.png": {
+      "people": [
+        "大西亜玖璃"
+      ],
+      "faceChecks": [
+        "大西亜玖璃"
+      ],
+      "ocr": [
+        "上原歩夢",
+        "UEHARA\tAYUMU"
+      ],
+      "optionalOcr": [
+        "Nijigasaki",
+        "虹ヶ咲"
+      ],
+      "ocrText": {
+        "UEHARA\tAYUMU": "UEHARA / AYUMU (서로 다른 줄)"
+      }
+    },
+    "HNzzIVPaMAABCG8.jpg": {
+      "characters": [
+        "上原歩夢",
+        "高坂穂乃果",
+        "高海千歌",
+        "澁谷かのん",
+        "日野下花帆",
+        "高橋ポルカ"
+      ]
+    },
+    "HOEbxsmaQAAEzPE.jpg": {
+      "people": [
+        "大西亜玖璃"
+      ],
+      "faceChecks": [
+        "大西亜玖璃"
+      ]
+    },
+    "HQZumV_bsAApXpH.jpg": {
+      "ocr": [
+        "Aguri Onishi"
+      ],
+      "ocrText": {
+        "Aguri Onishi": "AGURI ONISHI"
+      }
+    },
+    "HUkSgaHagAAnmIv.jpg": {
+      "characters": [
+        "澁谷かのん",
+        "唐可可",
+        "嵐千砂都",
+        "平安名すみれ",
+        "葉月恋",
+        "桜小路 な子",
+        "米女メイ",
+        "若菜四季",
+        "鬼塚夏美",
+        "ウィーン・マルガレーテ",
+        "鬼塚冬毬"
+      ],
+      "ocr": [
+        "結ヶ丘",
+        "Yuigaoka"
+      ],
+      "ocrText": {
+        "Yuigaoka": "YUIGAOKA"
+      }
+    },
+    "HULhS-nbEAAE__v.png": {
+      "absent": "allCatalogedSubjects"
+    },
+    "HULhTfCbkAA9CpC.png": {
+      "absent": "allCatalogedSubjects"
+    },
+    "HULhTyYbcAA04_7.png": {
+      "absent": "allCatalogedSubjects"
+    },
+    "HULXIXcbQAAg4CR.jpg": {
+      "characters": [
+        "高海千歌",
+        "桜内梨子",
+        "松浦果南",
+        "黒澤ダイヤ",
+        "渡辺曜",
+        "津島善子",
+        "国木田花丸",
+        "小原鞠莉",
+        "黒澤ルビィ"
+      ]
+    },
+    "HUp1LOHaIAEkx3X.jpg": {
+      "absent": "allCatalogedSubjects"
+    },
+    "HUtdhgpW4AAYP7R.jpg": {
+      "absent": "allCatalogedSubjects"
+    },
+    "HUtrIVYaQAAcC6D.jpg": {
+      "absent": "allCatalogedSubjects"
+    },
+    "HUtw8UQbgAApw0s.jpg": {
+      "absent": "allCatalogedSubjects"
+    },
+    "keyword-present/大西亜玖璃/HT6bQD1awAAtXpZ.jpg": {
+      "ocr": [
+        "大西亜玖璃"
+      ]
+    },
+    "keyword-present/大西亜玖璃/HUE8F-zboAEJ2ei.jpg": {
+      "ocr": [
+        "大西亜玖璃"
+      ]
+    },
+    "kv01.jpg": {
+      "characters": [
+        "上原歩夢",
+        "中須かすみ",
+        "桜坂しずく",
+        "朝香果林",
+        "宮下愛",
+        "近江彼方",
+        "優木せつ菜",
+        "エマ・ヴェルデ",
+        "天王寺璃奈",
+        "三船栞子",
+        "ミア・テイラー",
+        "鐘嵐珠",
+        "高咲侑"
+      ],
+      "subjectNotes": {
+        "上原歩夢": "뒷모습",
+        "中須かすみ": "뒷모습",
+        "桜坂しずく": "뒷모습",
+        "朝香果林": "뒷모습",
+        "宮下愛": "뒷모습",
+        "近江彼方": "뒷모습",
+        "優木せつ菜": "뒷모습",
+        "エマ・ヴェルデ": "뒷모습",
+        "天王寺璃奈": "뒷모습",
+        "三船栞子": "뒷모습",
+        "ミア・テイラー": "뒷모습",
+        "鐘嵐珠": "뒷모습"
+      },
+      "ocr": [
+        "虹ヶ咲"
+      ]
+    },
+    "QMaAPYEbSkSFUh9n.jpeg": {
+      "characters": [
+        "上原歩夢",
+        "中須かすみ",
+        "ミア・テイラー"
+      ],
+      "ocr": [
+        "虹ヶ咲",
+        "上原歩夢",
+        "中須かすみ",
+        "ミア・テイラー",
+        "大西亜玖璃",
+        "相良茉優",
+        "内田秀"
+      ]
+    },
+    "ss.jpg": {
+      "characters": [
+        "上原歩夢",
+        "中須かすみ",
+        "桜坂しずく",
+        "朝香果林",
+        "宮下愛",
+        "近江彼方",
+        "優木せつ菜",
+        "エマ・ヴェルデ",
+        "天王寺璃奈",
+        "三船栞子",
+        "ミア・テイラー",
+        "鐘嵐珠",
+        "高坂穂乃果",
+        "絢瀬絵里",
+        "南ことり",
+        "園田海未",
+        "星空凛",
+        "西木野真姫",
+        "東條希",
+        "小泉花陽",
+        "矢澤にこ",
+        "高海千歌",
+        "桜内梨子",
+        "松浦果南",
+        "黒澤ダイヤ",
+        "渡辺曜",
+        "津島善子",
+        "国木田花丸",
+        "小原鞠莉",
+        "黒澤ルビィ"
+      ]
+    },
+    "vY6nPzfXjwyOQ59u.jpeg": {
+      "characters": [
+        "上原歩夢",
+        "中須かすみ",
+        "桜坂しずく",
+        "朝香果林",
+        "宮下愛",
+        "近江彼方",
+        "優木せつ菜",
+        "エマ・ヴェルデ",
+        "天王寺璃奈",
+        "三船栞子",
+        "ミア・テイラー",
+        "鐘嵐珠"
+      ],
+      "ocr": [
+        "虹ヶ咲"
+      ]
+    },
+    "XJt75abr9IYTRIQa.jpeg": {
+      "characters": [
+        "上原歩夢",
+        "中須かすみ",
+        "桜坂しずく",
+        "朝香果林",
+        "宮下愛",
+        "近江彼方",
+        "優木せつ菜",
+        "エマ・ヴェルデ",
+        "天王寺璃奈",
+        "三船栞子",
+        "ミア・テイラー",
+        "鐘嵐珠",
+        "高咲侑"
+      ],
+      "ocr": [
+        "虹ヶ咲",
+        "Nijigasaki"
+      ]
+    }
+  },
+  "unlabeledImages": [
+    "G0e2w21aEAA6Ndl.png",
+    "HE-DksSbwAAGW7c.jpg",
+    "HEarJo0acAEGElM.jpg",
+    "HFDZGqHb0AA3z4d.jpg",
+    "HFEGXs8bAAA2F4g.jpg",
+    "HFEmpdcbAAAfbRb.jpg",
+    "HFHJiMVbcAA6eDZ.jpg",
+    "HT8Ro88agAAdTWa.jpg",
+    "c02.png",
+    "c02a.png",
+    "c02cv.png",
+    "c02s.png",
+    "chara_01_school-1.png",
+    "chara_01_stage.png",
+    "face_01_2-1.png",
+    "face_01_3-1.png",
+    "ocr-replay/2109087047483023541-0.jpg",
+    "ocr-replay/2109087047483023541-1.jpg",
+    "ocr-replay/2109123542667378938-0.jpg",
+    "ocr-replay/2109123542667378938-1.jpg",
+    "ocr-replay/2109123542667378938-2.jpg",
+    "ocr-replay/2109123542667378938-3.jpg",
+    "ocr-replay/2109129864934740047-0.jpg",
+    "ocr-replay/2109131884206927895-0.png",
+    "ocr-replay/2109443482188398674-0.jpg",
+    "ocr-replay/2109495524621746502-0.jpg"
+  ]
+}
