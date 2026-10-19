@@ -357,7 +357,7 @@ async function runJob(job: Job, attemptId: string) {
 
 async function runVisionJob(job: Job, attemptId: string) {
   if (!FULL_MODE) throw new Error("image job received in OCR-only mode");
-  const { availableNames, analyzeNamedImage } = await import("./named-analysis");
+  const { availableNames, analyzeNamedImage, foundNames, registeredKinds } = await import("./named-analysis");
   const names = availableNames(job.names || []);
   const skippedNames = (job.names || []).filter(name => !names.includes(name));
   const matches = [];
@@ -404,7 +404,7 @@ async function runVisionJob(job: Job, attemptId: string) {
       reusedFromImageUrl, bytes: buffer.length, names, matches: result, elapsedMs: Date.now() - started });
   }
   const error = names.length > 0 && fetched === 0 ? `none of ${job.imageUrls.length} images could be fetched` : null;
-  return { found: [...new Set(matches.map(match => match.name))], regions: 0, error, matches, skippedNames, warnings };
+  return { found: foundNames(matches, names, registeredKinds()), regions: 0, error, matches, skippedNames, warnings };
 }
 
 async function tick(): Promise<void> {

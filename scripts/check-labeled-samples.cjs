@@ -5,6 +5,7 @@ const { initDB } = require("../server/dist/db.js");
 const { loadModels } = require("../server/dist/inference.js");
 const { initOCR, parseSearchLists } = require("../server/dist/ocr.js");
 const { analyzeImage } = require("../server/dist/analyze.js");
+const { registeredKinds, selectNamedMatches, foundNames } = require("../server/dist/named-analysis.js");
 const { loadConfig } = require("../server/dist/config.js");
 const { loadSampleLabels } = require("./sample-labels.cjs");
 
@@ -24,6 +25,7 @@ async function main() {
   cfg.candidates = { ...cfg.candidates, enabled: false };
   const absentPeople = new Set(labels.subjectCatalog.people);
   const absentCharacters = new Set(labels.subjectCatalog.characters);
+  const registered = registeredKinds();
 
   let failed = 0;
   for (const file of files) {
@@ -34,6 +36,7 @@ async function main() {
     const expectedOcr = label.ocr || [];
     const optional = label.optionalOcr || [];
     const absentOcr = label.absentOcr || [];
+    const absentNames = label.absentNames || [];
     const terms = [...new Set([...expectedOcr, ...optional, ...absentOcr])];
     const errors = [];
     try {
@@ -48,9 +51,12 @@ async function main() {
         for (const name of expectedFaces) if (!foundFaces.includes(name)) errors.push(`face missing: ${name}`);
         for (const name of foundFaces) if (!expectedFaces.includes(name)) errors.push(`unexpected face: ${name}`);
       }
+      for (const name of absentNames) if (!registered.has(name)) errors.push(`absence target not registered: ${name}`);
+      const namedMatches = selectNamedMatches(result, absentNames, registered);
+      for (const name of foundNames(namedMatches, absentNames, registered)) errors.push(`unexpected found name: ${name}`);
       for (const term of expectedOcr) if (!result.ocr.found.includes(term)) errors.push(`OCR missing: ${term}`);
       for (const term of absentOcr) if (result.ocr.found.includes(term)) errors.push(`unexpected OCR: ${term}`);
-      console.log(`Labeled sample - ${JSON.stringify({ file, label, faces: result.faces, facesWeak: result.facesWeak, characters: result.characters, charactersWeak: result.charactersWeak, missingLabeledCharacters: expectedCharacters.filter(name => !foundCharacters.includes(name)), ocr: terms.map(term => ({ term, required: expectedOcr.includes(term), forbidden: absentOcr.includes(term), found: result.ocr.found.includes(term), score: result.ocr.detail.find(item => item.list === term)?.parts[0]?.score ?? 0 })), detections: result._detections, elapsedMs: result._elapsedMs, errors })}`);
+      console.log(`Labeled sample - ${JSON.stringify({ file, label, faces: result.faces, facesWeak: result.facesWeak, characters: result.characters, charactersWeak: result.charactersWeak, costumes: result.costumes, namedMatches, missingLabeledCharacters: expectedCharacters.filter(name => !foundCharacters.includes(name)), ocr: terms.map(term => ({ term, required: expectedOcr.includes(term), forbidden: absentOcr.includes(term), found: result.ocr.found.includes(term), score: result.ocr.detail.find(item => item.list === term)?.parts[0]?.score ?? 0 })), detections: result._detections, elapsedMs: result._elapsedMs, errors })}`);
     } catch (error) {
       errors.push(error.message);
       console.error(`Labeled sample failed - ${JSON.stringify({ file, errors })}`);

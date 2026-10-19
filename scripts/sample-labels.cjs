@@ -46,6 +46,10 @@ function loadSampleLabels() {
       if (!knownCharacters.has(name)) throw new Error(`Uncataloged character: ${file} ${name}`);
       seenCharacters.add(name);
     }
+    for (const name of uniqueNames(entry.absentNames || [], `${file}.absentNames`)) {
+      if (!knownPeople.has(name) && !knownCharacters.has(name)) throw new Error(`Uncataloged absent name: ${file} ${name}`);
+      if (entryPeople.includes(name) || entryCharacters.includes(name)) throw new Error(`Name both present and absent: ${file} ${name}`);
+    }
     for (const name of uniqueNames(entry.faceChecks || [], `${file}.faceChecks`)) {
       if (!entryPeople.includes(name)) throw new Error(`Face check without person label: ${file} ${name}`);
     }

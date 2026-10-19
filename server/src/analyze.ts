@@ -3,7 +3,7 @@
  */
 
 import path from "path";
-import { getGallery, l2normalize } from "./db";
+import { getGallery, l2normalize, Kind } from "./db";
 import { performOCR, SearchList, OcrResult } from "./ocr";
 import { matchGallery } from "./matching";
 import { collectCandidate, CandidateConfig } from "./candidates";
@@ -75,6 +75,9 @@ export interface Match {
   source?: string;
 }
 
+// Omitted targets preserve manual full analysis; an empty map disables vision.
+export type AnalysisTargets = Partial<Record<Kind, ReadonlySet<string>>>;
+
 export interface AnalyzeResult {
   ocr: OcrResult;
   /** 실물로 판정된 얼굴. */
@@ -97,6 +100,7 @@ async function recognizeFaces(
   imageBuffer: Buffer,
   faces: Detection[],
   cfg: Config,
+  names?: ReadonlySet<string>,
 ): Promise<{ strong: Match[]; weak: Match[] }> {
   const empty = { strong: [], weak: [] };
   if (!hasArcFace() || faces.length === 0) return empty;
@@ -123,7 +127,7 @@ async function recognizeFaces(
       extremePose ? cfg.margin.facePose : cfg.margin.face,
       extremePose ? "face-pose" : "face",
     );
-    if (!best) continue;
+    if (!best || (names && !names.has(best.name))) continue;
 
     const match: Match = {
       name: best.name,
@@ -175,6 +179,7 @@ async function recognizeCharacters(
   imageBuffer: Buffer,
   persons: Detection[],
   cfg: Config,
+  names?: ReadonlySet<string>,
 ): Promise<{ strong: Match[]; weak: Match[] }> {
   const ccipGallery = hasCcip() ? getGallery("character", "ccip") : [];
   const registered = new Set(ccipGallery.map((g) => g.name));
@@ -192,6 +197,7 @@ async function recognizeCharacters(
       ? matchGallery(embedding, ccipGallery, cfg.similarityThreshold.character, cfg.margin.character, "character")
       : null;
     if (best && embedding) {
+      if (names && !names.has(best.name)) continue;
       strong.push({
         name: best.name,
         score: +best.score.toFixed(4),
@@ -223,7 +229,7 @@ async function recognizeCharacters(
         if (!registered.has(name)) continue;
         if (!tagged || c.prob > tagged.prob) tagged = { name, prob: c.prob };
       }
-      if (!tagged) continue;
+      if (!tagged || (names && !names.has(tagged.name))) continue;
 
       // 태거는 겹친 인물 크롭에도 높은 확률로 잘못된 이름을 낼 수 있다.
       // CCIP가 기각한 경우에는 신원을 확정하거나 후보 갤러리에 쓰지 않는다.
@@ -255,6 +261,7 @@ async function recognizeCostumes(
   persons: Detection[],
   animeFaces: Detection[],
   cfg: Config,
+  names?: ReadonlySet<string>,
 ): Promise<Match[]> {
   if (!hasWdTagger()) return [];
   const gallery = getGallery("costume", "wdtag");
@@ -276,7 +283,7 @@ async function recognizeCostumes(
       "costume",
       "max",
     );
-    if (best) {
+    if (best && (!names || names.has(best.name))) {
       matches.push({
         name: best.name,
         score: +best.score.toFixed(4),
@@ -304,19 +311,29 @@ export async function analyzeImage(
   imageBuffer: Buffer,
   searchLists: SearchList[],
   cfg: Config,
+  targets?: AnalysisTargets,
 ): Promise<AnalyzeResult> {
   const started = Date.now();
+  const enabled = (kind: Kind) => targets === undefined || (targets[kind]?.size ?? 0) > 0;
+  const facesEnabled = enabled("face");
+  const charactersEnabled = enabled("character");
+  const costumesEnabled = enabled("costume");
 
   const [ocr, realFaces, animeFaces, animePersons] = await Promise.all([
     performOCR(imageBuffer, searchLists, cfg.ocr),
-    detectFaces(imageBuffer),
-    detectAnimeFaces(imageBuffer),
-    detectAnimePersons(imageBuffer),
+    facesEnabled ? detectFaces(imageBuffer) : [],
+    costumesEnabled ? detectAnimeFaces(imageBuffer) : [],
+    charactersEnabled || costumesEnabled ? detectAnimePersons(imageBuffer) : [],
   ]);
 
-  const faces = await recognizeFaces(imageBuffer, realFaces, cfg);
-  const characters = await recognizeCharacters(imageBuffer, animePersons, cfg);
-  const costumes = await recognizeCostumes(imageBuffer, animePersons, animeFaces, cfg);
+  // Keep competitors within an enabled kind for margin checks, but never emit or
+  // collect candidates for names outside the request. Disabled kinds do no inference.
+  const faces = facesEnabled
+    ? await recognizeFaces(imageBuffer, realFaces, cfg, targets?.face) : { strong: [], weak: [] };
+  const characters = charactersEnabled
+    ? await recognizeCharacters(imageBuffer, animePersons, cfg, targets?.character) : { strong: [], weak: [] };
+  const costumes = costumesEnabled
+    ? await recognizeCostumes(imageBuffer, animePersons, animeFaces, cfg, targets?.costume) : [];
 
   return {
     ocr,
