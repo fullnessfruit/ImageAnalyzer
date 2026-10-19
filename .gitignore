@@ -143,7 +143,6 @@ vite.config.ts.timestamp-*
 server/dist/
 
 # Python
-training/__pycache__/
 *.pyc
 
 # PyTorch weights (auto-downloaded pretrained or training artifacts)

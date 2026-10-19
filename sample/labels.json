@@ -489,6 +489,43 @@
     "HUp1LOHaIAEkx3X.jpg": {
       "absent": "allCatalogedSubjects"
     },
+    "HUp3BAfbkAE98jj.jpg": {
+      "characters": [
+        "高坂穂乃果",
+        "絢瀬絵里",
+        "南ことり",
+        "園田海未",
+        "星空凛",
+        "西木野真姫",
+        "東條希",
+        "小泉花陽",
+        "矢澤にこ"
+      ],
+      "ocr": [
+        "Kosaka Honoka",
+        "Ayase Eri",
+        "Minami Kotori",
+        "Sonoda Umi",
+        "Hoshizora Rin",
+        "Nishikino Maki",
+        "Tojo Nozomi",
+        "Koizumi Hanayo",
+        "Yazawa Nico"
+      ],
+      "ocrText": {
+        "Kosaka Honoka": "KOSAKA HONOKA",
+        "Ayase Eri": "AYASE ERI",
+        "Minami Kotori": "MINAMI KOTORI",
+        "Sonoda Umi": "SONODA UMI",
+        "Hoshizora Rin": "HOSHIZORA RIN",
+        "Nishikino Maki": "NISHIKINO MAKI",
+        "Tojo Nozomi": "TOJO NOZOMI",
+        "Koizumi Hanayo": "KOIZUMI HANAYO",
+        "Yazawa Nico": "YAZAWA NICO"
+      },
+      "absentNames": ["上原歩夢"],
+      "imageNotes": "μ's 아홉 명의 캐릭터 카드. 첫 카드의 실제 영문 표기는 KOSAKA HONOKA이며 나머지 카드도 영문 이름이 대문자로 적혀 있다. 上原歩夢는 없다."
+    },
     "HUtdhgpW4AAYP7R.jpg": {
       "absent": "allCatalogedSubjects"
     },
@@ -497,6 +534,37 @@
     },
     "HUtw8UQbgAApw0s.jpg": {
       "absent": "allCatalogedSubjects"
+    },
+    "HUvPafHb0AAK2Tc.jpg": {
+      "absent": "allCatalogedSubjects",
+      "absentNames": ["上原歩夢"],
+      "imageNotes": "다른 작품의 애니 캐릭터 포스터. 목록에 등록된 인물·캐릭터는 없다."
+    },
+    "HUvX0jAbsAAV_q4.jpg": {
+      "absent": "allCatalogedSubjects",
+      "absentNames": ["上原歩夢"],
+      "imageNotes": "다른 작품의 캐릭터 굿즈가 진열된 매장 사진. 목록에 등록된 인물·캐릭터는 없다."
+    },
+    "HUvY-rIbsAAA4Fk.jpg": {
+      "characters": [
+        "高坂穂乃果",
+        "絢瀬絵里",
+        "南ことり",
+        "園田海未",
+        "星空凛",
+        "西木野真姫",
+        "東條希",
+        "小泉花陽",
+        "矢澤にこ"
+      ],
+      "ocr": ["μ's"],
+      "absentNames": ["上原歩夢"],
+      "imageNotes": "μ's 아홉 명의 그림과 실사 인물이 함께 있는 홍보 이미지. 오른쪽 아래에 μ's가 적혀 있으며 上原歩夢는 없다."
+    },
+    "HUviUB1bkAAwM5k.jpg": {
+      "absent": "allCatalogedSubjects",
+      "absentNames": ["上原歩夢"],
+      "imageNotes": "실사 인물 다섯 명의 단체 사진. 목록에 등록된 인물·캐릭터는 없다."
     },
     "keyword-present/大西亜玖璃/HT6bQD1awAAtXpZ.jpg": {
       "ocr": [

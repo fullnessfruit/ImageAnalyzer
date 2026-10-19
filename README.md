@@ -78,6 +78,7 @@ npm run server           # manual HTTP API; the extension uses the broker worker
 
 Models (~815 MiB) download automatically on first run.
 `server.bat` starts the full broker worker (OCR, faces, characters and costumes); `server_local.bat` selects the local broker at 127.0.0.1:3100. Use `server-ocr.bat` / `server-ocr_local.bat` for OCR only. All workers use the same broker and `OCR_BROKER_SECRET` as VoiceAnalyzer, and open no incoming port. The extension sends its shared target-name list; names exactly match registered data folders. Run the existing registration commands after adding reference images. The manual HTTP API remains available via `npm run server`.
+If a target name exists in both a character and costume gallery, plain `上原歩夢` requires an identity hit for `found`; costume hits still appear in typed `matches`. Add `costume:上原歩夢` to the extension's media-analysis names to request the outfit independently. The worker returns that exact target string in `found` for a costume hit. `character:<name>` and `face:<name>` select one gallery kind explicitly. The current 上原歩夢 costume gallery also matches several similar but different outfits in the labeled samples, so the explicit costume target will report those false positives until its classifier is improved.
 
 ### Labeled OCR samples
 
