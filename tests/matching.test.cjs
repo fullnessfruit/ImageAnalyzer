@@ -22,3 +22,16 @@ test('costume exemplar scoring still rejects close runner-ups', () => {
   ];
   assert.equal(matchGallery(new Float32Array([1, 0]), gallery, 0.9, 0.05, undefined, 'max'), null);
 });
+
+test('name-specific thresholds reject the best identity without promoting the runner-up', () => {
+  const first = new Float32Array([0.95, Math.sqrt(1 - 0.95 ** 2)]);
+  const second = new Float32Array([0.8, 0.6]);
+  const gallery = [
+    { name: 'first', vectors: [first], centroid: first },
+    { name: 'second', vectors: [second], centroid: second },
+  ];
+  const query = new Float32Array([1, 0]);
+
+  assert.equal(matchGallery(query, gallery, name => name === 'first' ? 0.96 : 0.28, 0), null);
+  assert.equal(matchGallery(query, gallery, name => name === 'first' ? 0.94 : 0.28, 0)?.name, 'first');
+});

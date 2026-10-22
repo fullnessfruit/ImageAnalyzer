@@ -185,7 +185,8 @@
       "people": [
         "伊達さゆり",
         "林鼓子"
-      ]
+      ],
+      "absentWeakFaces": ["大西亜玖璃"]
     },
     "GPEWXlIaYAAo93L.jpg": {
       "people": [
@@ -208,7 +209,9 @@
       "people": [
         "大西亜玖璃",
         "高尾奏音"
-      ]
+      ],
+      "faceChecks": ["大西亜玖璃"],
+      "absentWeakFaces": ["楡井希実"]
     },
     "HCPt__racAAm5_V.jpg": {
       "people": [
@@ -286,12 +289,14 @@
       "people": [
         "久保田未夢",
         "村上奈津実"
-      ]
+      ],
+      "absentWeakFaces": ["楡井希実"]
     },
     "HFMLrhZasAAVHyV.jpg": {
       "people": [
         "鈴原希実"
-      ]
+      ],
+      "absentWeakFaces": ["大西亜玖璃"]
     },
     "HFruFbaaoAAkARg.jpg": {
       "people": [
@@ -330,6 +335,7 @@
       "faceChecks": [
         "大西亜玖璃"
       ],
+      "absentWeakFaces": ["大西亜玖璃"],
       "ocr": [
         "大西亜玖璃",
         "鈴原希実",
@@ -356,6 +362,7 @@
       "faceChecks": [
         "大西亜玖璃"
       ],
+      "absentWeakFaces": ["大西亜玖璃"],
       "ocr": [
         "大西亜玖璃",
         "鈴原希実"
@@ -372,7 +379,8 @@
       ],
       "faceChecks": [
         "大西亜玖璃"
-      ]
+      ],
+      "absentWeakFaces": ["大西亜玖璃"]
     },
     "HKnZGw8acAILsLA.jpg": {
       "people": [
@@ -486,6 +494,48 @@
         "黒澤ルビィ"
       ]
     },
+    "HS9g4HvaUAA8-_w.jpg": {
+      "absent": "allCatalogedSubjects",
+      "absentCostumes": ["上原歩夢"],
+      "imageNotes": "BanG Dream! 캐릭터 프로필 카드 행사 안내. 등록된 인물·캐릭터·의상은 없다."
+    },
+    "HVDaSCVbAAAAj7N.jpg": {
+      "absent": "allCatalogedSubjects",
+      "absentWeakFaces": ["大西亜玖璃"],
+      "absentCostumes": ["上原歩夢"],
+      "imageNotes": "실사 인물이 등장하는 りこんち秘密基地 방송 안내. 등록된 인물·캐릭터·의상은 없다."
+    },
+    "HVEjx9aagAAZ9i4.jpg": {
+      "absent": "allCatalogedSubjects",
+      "absentWeakFaces": ["大西亜玖璃"],
+      "absentCostumes": ["上原歩夢"],
+      "imageNotes": "실사 인물이 사과 제품 상자를 든 사진. 등록된 인물·캐릭터·의상은 없다."
+    },
+    "HVHrU8Ea0AA6-hf.jpg": {
+      "characters": ["高坂穂乃果", "絢瀬絵里", "南ことり", "園田海未", "星空凛", "西木野真姫", "東條希", "小泉花陽", "矢澤にこ", "高海千歌", "桜内梨子", "松浦果南", "黒澤ダイヤ", "渡辺曜", "津島善子", "国木田花丸", "小原鞠莉", "黒澤ルビィ"],
+      "absentNames": ["大西亜玖璃", "楡井希実", "上原歩夢"],
+      "absentCostumes": ["上原歩夢"],
+      "imageNotes": "Love Live!와 Sunshine!! 협업 카페 메뉴 안내. 위쪽은 高坂穂乃果와 高海千歌의 상품 사진이고 아래 18명의 일러스트가 있다. 등록된 실사 인물이나 上原歩夢는 없다."
+    },
+    "HVHrYBSaEAAfF1o.jpg": {
+      "characters": ["高坂穂乃果", "絢瀬絵里", "南ことり", "園田海未", "星空凛", "西木野真姫", "東條希", "小泉花陽", "矢澤にこ", "高海千歌", "桜内梨子", "松浦果南", "黒澤ダイヤ", "渡辺曜", "津島善子", "国木田花丸", "小原鞠莉", "黒澤ルビィ"],
+      "absentNames": ["大西亜玖璃", "楡井希実", "上原歩夢"],
+      "absentCostumes": ["上原歩夢"],
+      "subjectNotes": { "渡辺曜": "아래쪽 오른쪽에서 세 번째 배지. 西木野真姫와 渡辺曜와 矢澤にこ 순서이며 포장 반사와 흐림으로 식별이 어렵다." },
+      "imageNotes": "Love Live!와 Sunshine!! 협업 카페 캐릭터 상품 진열 사진. 18명의 일러스트가 배지에 있고 등록된 실사 인물이나 上原歩夢는 없다."
+    },
+    "HVIs0Kta8AEx4ZK.jpg": {
+      "absent": "allCatalogedSubjects",
+      "absentCostumes": ["上原歩夢"],
+      "absentOcr": ["あぐり"],
+      "imageNotes": "おにいちゃんはおしまい！ 캐릭터 상품 안내. 등록된 인물·캐릭터·의상과 あぐり 표기는 없다."
+    },
+    "HVIsytPaAAAvC-k.jpg": {
+      "absent": "allCatalogedSubjects",
+      "absentCostumes": ["上原歩夢"],
+      "absentOcr": ["あぐり"],
+      "imageNotes": "おにいちゃんはおしまい！ 팝업숍 안내. 등록된 인물·캐릭터·의상과 あぐり 표기는 없다."
+    },
     "HUp1LOHaIAEkx3X.jpg": {
       "absent": "allCatalogedSubjects"
     },
@@ -503,7 +553,7 @@
       ],
       "ocr": [
         "Kosaka Honoka",
-        "Ayase Eri",
+        "Ayase Eli",
         "Minami Kotori",
         "Sonoda Umi",
         "Hoshizora Rin",
@@ -514,7 +564,7 @@
       ],
       "ocrText": {
         "Kosaka Honoka": "KOSAKA HONOKA",
-        "Ayase Eri": "AYASE ERI",
+        "Ayase Eli": "AYASE ELI",
         "Minami Kotori": "MINAMI KOTORI",
         "Sonoda Umi": "SONODA UMI",
         "Hoshizora Rin": "HOSHIZORA RIN",
@@ -524,7 +574,8 @@
         "Yazawa Nico": "YAZAWA NICO"
       },
       "absentNames": ["上原歩夢"],
-      "imageNotes": "μ's 아홉 명의 캐릭터 카드. 첫 카드의 실제 영문 표기는 KOSAKA HONOKA이며 나머지 카드도 영문 이름이 대문자로 적혀 있다. 上原歩夢는 없다."
+      "absentCostumes": ["上原歩夢"],
+      "imageNotes": "μ's 아홉 명의 캐릭터 카드. 카드 옆면의 영문 이름은 위에서 아래로 90도 회전해 적혀 있다. 첫 카드는 KOSAKA HONOKA, 두 번째는 AYASE ELI이며 나머지 카드도 대문자다. 上原歩夢는 없다."
     },
     "HUtdhgpW4AAYP7R.jpg": {
       "absent": "allCatalogedSubjects"
@@ -538,11 +589,13 @@
     "HUvPafHb0AAK2Tc.jpg": {
       "absent": "allCatalogedSubjects",
       "absentNames": ["上原歩夢"],
+      "absentCostumes": ["上原歩夢"],
       "imageNotes": "다른 작품의 애니 캐릭터 포스터. 목록에 등록된 인물·캐릭터는 없다."
     },
     "HUvX0jAbsAAV_q4.jpg": {
       "absent": "allCatalogedSubjects",
       "absentNames": ["上原歩夢"],
+      "absentCostumes": ["上原歩夢"],
       "imageNotes": "다른 작품의 캐릭터 굿즈가 진열된 매장 사진. 목록에 등록된 인물·캐릭터는 없다."
     },
     "HUvY-rIbsAAA4Fk.jpg": {
@@ -559,11 +612,13 @@
       ],
       "ocr": ["μ's"],
       "absentNames": ["上原歩夢"],
+      "absentCostumes": ["上原歩夢"],
       "imageNotes": "μ's 아홉 명의 그림과 실사 인물이 함께 있는 홍보 이미지. 오른쪽 아래에 μ's가 적혀 있으며 上原歩夢는 없다."
     },
     "HUviUB1bkAAwM5k.jpg": {
       "absent": "allCatalogedSubjects",
       "absentNames": ["上原歩夢"],
+      "absentCostumes": ["上原歩夢"],
       "imageNotes": "실사 인물 다섯 명의 단체 사진. 목록에 등록된 인물·캐릭터는 없다."
     },
     "keyword-present/大西亜玖璃/HT6bQD1awAAtXpZ.jpg": {
@@ -698,7 +753,8 @@
       "ocr": [
         "虹ヶ咲",
         "Nijigasaki"
-      ]
+      ],
+      "imageNotes": "하단 로고 위쪽의 휘어진 영문 Nijigasaki 표기는 흐릿해서 글자 경계가 뚜렷하지 않다."
     },
     "G0e2w21aEAA6Ndl.png": {
       "people": [

@@ -443,6 +443,9 @@ async function detectTextRegions(src: RawSrc, scales: number[]): Promise<TextBox
   for (const box of all) {
     if (!kept.some((k) => boxIou(box.box, k.box) > 0.5)) kept.push(box);
   }
+  if (process.env.IMAGEANALYZER_OCR_DEBUG === "1") {
+    console.log(`[ocr] pre-merge boxes - ${JSON.stringify(kept.map(box => ({ box: box.box.map(v => +v.toFixed(1)), score: +box.score.toFixed(3) })))}`);
+  }
   return mergeIntoLines(kept);
 }
 
@@ -473,6 +476,10 @@ function mergeIntoLines(boxes: TextBox[]): TextBox[] {
       for (let j = i + 1; j < current.length; j++) {
         if (used.has(j) || current[j].oriented) continue;
         const [bx, by, bw, bh] = current[j].box;
+
+        // 서로 나란한 세로쓰기 열은 높이와 세로 중첩률이 같아도 한 가로줄이 아니다.
+        // 이런 열을 합치면 높이 48px 인식 입력으로 통째로 압축되어 글자가 사라진다.
+        if (ah > aw * 1.5 || bh > bw * 1.5) continue;
 
         // 세로 범위가 대부분 겹치고 높이가 비슷하며 가로 간격이 좁아야 같은 줄로 본다.
         const overlap = Math.min(ay + ah, by + bh) - Math.max(ay, by);
@@ -517,6 +524,8 @@ const REC_CHUNK_WIDTH = 1200;
 const REC_BATCH = 4;
 /** 인식할 영역 수 상한. 텍스트가 많은 이미지의 최악 지연을 제한한다. */
 const MAX_REGIONS = 40;
+/** Rotated Latin cards can have a few low-scoring name boxes after the normal 40 regions. */
+const MAX_ROTATED_REGIONS = 50;
 
 /** [T, C] 확률 격자. */
 interface Lattice {
@@ -588,8 +597,7 @@ async function recognizeBatch(model: RecModel, strips: Strip[]): Promise<Lattice
  * 뭉개져 정보가 전손된다. 縦書き는 글자가 대략 정사각 셀에 하나씩 쌓이므로,
  * 셀 단위로 잘라 가로로 이어 붙이면 글자를 세운 채 가로 텍스트로 만들 수 있다.
  */
-function unstackVertical(crop: Buffer, w: number, h: number): { buf: Buffer; w: number; h: number } | null {
-  const cells = Math.round(h / w);
+function unstackVertical(crop: Buffer, w: number, h: number, cells: number): { buf: Buffer; w: number; h: number } | null {
   if (cells < 2 || cells > 40) return null;
 
   const cellH = Math.floor(h / cells);
@@ -646,6 +654,7 @@ async function buildStripsForRegion(
   src: RawSrc,
   region: TextBox,
   minStripWidth: number,
+  includeVerticalCells: boolean,
 ): Promise<Strip[]> {
   if (region.oriented) return resizeAndChunkStrips([cropOriented(src, region.oriented)], minStripWidth);
   const box = region.box;
@@ -659,9 +668,12 @@ async function buildStripsForRegion(
   const sources: { buf: Buffer; w: number; h: number }[] = [{ buf: crop, w: width, h: height }];
 
   // 세로로 길면 셀 분해본을 후보에 추가한다. 최고 점수를 취하므로 잘못된 가정이어도 손해가 없다.
-  if (height > width * 1.5) {
-    const unstacked = unstackVertical(crop, width, height);
-    if (unstacked) sources.push(unstacked);
+  if (includeVerticalCells && height > width * 1.5) {
+    const estimatedCells = Math.round(height / width);
+    for (const cells of [estimatedCells, estimatedCells + 1, estimatedCells + 2]) {
+      const unstacked = unstackVertical(crop, width, height, cells);
+      if (unstacked) sources.push(unstacked);
+    }
   }
 
   return resizeAndChunkStrips(sources, minStripWidth);
@@ -916,23 +928,28 @@ export async function performOCR(
   for (const source of sources) {
     for (const box of await detectTextRegions(source, opts.detScales)) regions.push({ src: source, box });
   }
-  const detMs = Date.now() - tDet;
+  let detMs = Date.now() - tDet;
   if (regions.length === 0) {
     console.log(`[ocr] no text regions detected - scales: ${opts.detScales.join(",")}, tiles: ${sources.length - 1}, detMs: ${detMs}`);
     return empty;
+  }
+  if (process.env.IMAGEANALYZER_OCR_DEBUG === "1") {
+    console.log(`[ocr] region boxes - ${JSON.stringify(regions.map(({ src, box }) => ({ source: [src.width, src.height], box: box.box.map(v => +v.toFixed(1)), score: +box.score.toFixed(3), oriented: box.oriented ? +box.oriented.angle.toFixed(3) : null })))}`);
   }
 
   // 스트립은 모델과 무관하므로 한 번만 만들어 모든 언어 모델이 공유한다.
   const shortestKeyword = Math.min(...searchLists.flatMap((l) => [...l.parts, ...(l.exclusions || [])].map((p) => [...p].length)));
   const minStripWidth = Math.max(16, 12 * shortestKeyword);
+  const includeVerticalCells = searchLists.some(list => [...list.parts, ...(list.exclusions || [])]
+    .some(part => /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u.test(part)));
 
   // 인식이 전체 시간의 대부분이라 최악 케이스에 상한을 둔다. 검출 점수가 높은
   // 영역부터 처리하므로 잘리는 것은 신뢰도가 낮은 영역이다.
   const tStrip = Date.now();
   const ranked = regions.sort((a, b) => b.box.score - a.box.score).slice(0, MAX_REGIONS);
   const strips: Strip[] = [];
-  for (const region of ranked) strips.push(...(await buildStripsForRegion(region.src, region.box, minStripWidth)));
-  const stripMs = Date.now() - tStrip;
+  for (const region of ranked) strips.push(...(await buildStripsForRegion(region.src, region.box, minStripWidth, includeVerticalCells)));
+  let stripMs = Date.now() - tStrip;
 
   // 검색어를 표현할 수 있는 모델은 전부 돌리고 점수로 승부를 가린다.
   //
@@ -967,7 +984,7 @@ export async function performOCR(
   for (const kind of setsByKind.keys()) {
     latticesByKind.set(kind, await recognizeBatch(recModels.get(kind)!, strips));
   }
-  const recMs = Date.now() - tRec;
+  let recMs = Date.now() - tRec;
 
   // 파트 하나의 점수 = 표현 가능한 모든 모델 × 모든 격자 × 모든 표기 변형 중 최대값.
   // 짧은 가나에 한해서 같은 스트립의 한 글자 차이 읽기가 더 강하면 그 후보는 보류한다.
@@ -991,6 +1008,25 @@ export async function performOCR(
     if (!shortKana || best < opts.scoreThreshold) return best;
 
     hits.sort((a, b) => b.score - a.score);
+    if (process.env.IMAGEANALYZER_OCR_DEBUG === "1") {
+      const diagnostics = hits.map(hit => {
+        const reads = [...latticesByKind].map(([kind, lattices]) => ({ kind, text: greedyRead(lattices[hit.index], recModels.get(kind)!) }));
+        const rivals = [...new Set(reads.flatMap(read => oneCharRivals(part, read.text)))];
+        const scores = [...latticesByKind].map(([kind, lattices]) => {
+          const targetIds = setsByKind.get(kind)?.get(part);
+          return {
+            kind,
+            target: targetIds ? ctcKeywordScore(lattices[hit.index], targetIds) : null,
+            rivals: rivals.flatMap(rival => {
+              const ids = toClassIdSets(rival, recModels.get(kind)!);
+              return ids ? [{ text: rival, ...ctcKeywordScore(lattices[hit.index], ids) }] : [];
+            }),
+          };
+        });
+        return { model: hit.kind, strip: hit.index, score: +hit.score.toFixed(3), endStep: hit.endStep, reads, scores };
+      });
+      console.log(`[ocr] short kana candidates - part: ${JSON.stringify(part)}, hits: ${JSON.stringify(diagnostics)}`);
+    }
     let rejectedBy: { rival: string; rivalScore: number; targetScore: number; candidateScore: number; kind: RecKind } | null = null;
     for (const hit of hits) {
       const model = recModels.get(hit.kind)!;
@@ -1020,11 +1056,16 @@ export async function performOCR(
           }
         }
 
-        // 일본어 모델이 짧은 가나를 자신 있게 잘못 읽을 때 v5가 같은 위치에서 훨씬
-        // 강하게 지지하는 대체 읽기는 반증으로 쓴다. 반대 방향으로 적용하면 v5가
-        // 정확히 읽은 めぐり까지 ja의 あぐり 오독 때문에 버려진다.
+        // 다른 모델이 같은 위치의 대체 읽기를 훨씬 강하게 지지하면 반증으로 쓴다.
+        // ja 후보에는 v5 증거를 바로 적용한다. v5 후보는 자기 격자에서도 대체
+        // 읽기가 거의 동점일 때만 ja 증거를 허용한다. 그렇지 않으면 정확한
+        // v5의 めぐり가 ja의 あぐり 오독 때문에 버려진다.
         for (const [otherKind, otherLattices] of latticesByKind) {
-          if (hit.kind !== "ja" || otherKind !== "v5") continue;
+          const jaCandidate = hit.kind === "ja" && otherKind === "v5";
+          const v5Ambiguous = hit.kind === "v5" && otherKind === "ja" &&
+            match.score >= opts.scoreThreshold && match.score >= hit.score * 0.9 &&
+            Math.abs(match.endStep - hit.endStep) <= Math.max(2, Math.round(lat.T * 0.1));
+          if (!jaCandidate && !v5Ambiguous) continue;
           const otherLat = otherLattices[hit.index];
           const otherModel = recModels.get(otherKind)!;
           const otherTargetIds = setsByKind.get(otherKind)?.get(part);
@@ -1050,10 +1091,44 @@ export async function performOCR(
     return 0;
   };
 
-  const { detail, found, matchedKeywords } = evaluateSearchLists(searchLists, scorePart, opts.scoreThreshold);
+  let { detail, found, matchedKeywords } = evaluateSearchLists(searchLists, scorePart, opts.scoreThreshold);
+
+  // 영문 단어 전체가 카드 옆면에서 90도 돌아간 경우 정자 세로쓰기 셀 재배열로는
+  // 복원할 수 없다. 원본 격자에서 라틴 검색어를 놓쳤고 긴 세로 박스가 여러 개일 때만
+  // 한 번 더 검출한다. 혼합 언어 요청도 지원하되, 이미 읽힌 보통 영문에는 비용을 안 쓴다.
+  const missingLatin = detail.some(item => item.parts.some(part =>
+    part.score < opts.scoreThreshold && /[\p{Script=Latin}]{3}/u.test(part.text)));
+  const tallOriginals = regions.filter(({ src: regionSrc, box }) => regionSrc === src &&
+    box.box[3] > box.box[2] * 2.5 && box.box[3] >= 40).length;
+  let rotatedRegionCount = 0;
+  if (missingLatin && tallOriginals >= 3 && setsByKind.size > 0) {
+    const tRotDet = Date.now();
+    const rotated = await fromRaw(src).rotate(270).raw().toBuffer({ resolveWithObject: true });
+    const rotatedSrc: RawSrc = { buf: rotated.data, width: rotated.info.width, height: rotated.info.height };
+    const rotatedBoxes = await detectTextRegions(rotatedSrc, opts.detScales);
+    rotatedRegionCount = rotatedBoxes.length;
+    for (const box of rotatedBoxes) regions.push({ src: rotatedSrc, box });
+    detMs += Date.now() - tRotDet;
+
+    const tRotStrip = Date.now();
+    const rotatedStrips: Strip[] = [];
+    for (const box of rotatedBoxes.sort((a, b) => b.score - a.score).slice(0, MAX_ROTATED_REGIONS)) {
+      rotatedStrips.push(...(await buildStripsForRegion(rotatedSrc, box, minStripWidth, false)));
+    }
+    stripMs += Date.now() - tRotStrip;
+    if (rotatedStrips.length > 0) {
+      const tRotRec = Date.now();
+      for (const kind of setsByKind.keys()) {
+        latticesByKind.get(kind)!.push(...(await recognizeBatch(recModels.get(kind)!, rotatedStrips)));
+      }
+      recMs += Date.now() - tRotRec;
+      strips.push(...rotatedStrips);
+      ({ detail, found, matchedKeywords } = evaluateSearchLists(searchLists, scorePart, opts.scoreThreshold));
+    }
+  }
 
   console.log(
-    `[ocr] regions: ${regions.length}, oriented: ${regions.filter((region) => region.box.oriented).length}, tiles: ${sources.length - 1}, strips: ${strips.length}, lattices: ${[...latticesByKind].map(([k, v]) => `${k}=${v.length}`).join(",")}, matched: ${found.length}/${searchLists.length}, detMs: ${detMs}, stripMs: ${stripMs}, recMs: ${recMs}`,
+    `[ocr] regions: ${regions.length}, oriented: ${regions.filter((region) => region.box.oriented).length}, tiles: ${sources.length - 1}, rotated: ${rotatedRegionCount > 0 ? 1 : 0}, strips: ${strips.length}, lattices: ${[...latticesByKind].map(([k, v]) => `${k}=${v.length}`).join(",")}, matched: ${found.length}/${searchLists.length}, detMs: ${detMs}, stripMs: ${stripMs}, recMs: ${recMs}`,
   );
   for (const d of detail) {
     console.log(`[ocr]   list="${d.list.replace(/\t/g, "\\t")}" matched=${d.matched} parts=${d.parts.map((p) => `${p.text}:${p.score.toFixed(3)}`).join(" ")} exclusions=${d.exclusions.map(p => `${p.text}:${p.score.toFixed(3)}`).join(" ")} excludedBy=${JSON.stringify(d.excludedBy)} keyword=${JSON.stringify(d.keyword)}`);

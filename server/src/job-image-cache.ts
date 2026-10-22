@@ -15,3 +15,39 @@ export class JobImageCache<T> {
     return { result };
   }
 }
+
+/** Reuse a successful result for the same URL and analysis inputs across broker jobs. */
+export class TimedImageResultCache<T> {
+  private readonly entries = new Map<string, {
+    result: T;
+    imageSha256: string;
+    bytes: number;
+    expiresAt: number;
+  }>();
+
+  constructor(private readonly ttlMs = 24 * 60 * 60 * 1000, private readonly now = Date.now) {}
+
+  get(url: string, analysisKey: string): { result: T; imageSha256: string; bytes: number } | undefined {
+    const key = JSON.stringify([url, analysisKey]);
+    const entry = this.entries.get(key);
+    if (!entry) return undefined;
+    if (entry.expiresAt <= this.now()) {
+      this.entries.delete(key);
+      return undefined;
+    }
+    return { result: entry.result, imageSha256: entry.imageSha256, bytes: entry.bytes };
+  }
+
+  set(url: string, analysisKey: string, result: T, imageSha256: string, bytes: number): void {
+    this.entries.set(JSON.stringify([url, analysisKey]), {
+      result, imageSha256, bytes, expiresAt: this.now() + this.ttlMs,
+    });
+  }
+
+  prune(): void {
+    const now = this.now();
+    for (const [key, entry] of this.entries) {
+      if (entry.expiresAt <= now) this.entries.delete(key);
+    }
+  }
+}

@@ -1,9 +1,10 @@
 {
   "similarityThreshold": {
-    "face": 0.45,
+    "face": 0.5,
     "faceWeak": 0.28,
+    "faceWeakByName": { "大西亜玖璃": 0.49, "楡井希実": 0.32 },
     "facePose": 0.5,
-    "character": 0.82,
+    "character": 0.85,
     "costume": 0.52
   },
   "margin": {

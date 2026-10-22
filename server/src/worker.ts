@@ -37,7 +37,7 @@ import { ensureModelsDownloaded } from "./model-downloader";
 import { initOCR, parseSearchLists, parseKeywordBlocks, performOCR, KeywordBlock } from "./ocr";
 import { loadConfig, PROJECT_ROOT } from "./config";
 import { appendAnalysisLog, summarizeAnalysisError } from "./analysis-log";
-import { JobImageCache } from "./job-image-cache";
+import { JobImageCache, TimedImageResultCache } from "./job-image-cache";
 
 const execFileAsync = promisify(execFile);
 
@@ -49,6 +49,10 @@ const INTERVAL_MS = Number(process.env.OCR_WORKER_INTERVAL_MS || 60000);
 const WORKER_ID = process.env.OCR_WORKER_ID || `imageanalyzer-${process.pid}`;
 // Vision work is opt-in; an OCR-only setting always wins over --all.
 const FULL_MODE = process.argv.includes("--all") && !process.argv.includes("--ocr-only") && process.env.IMAGEANALYZER_OCR_ONLY !== "1";
+const ocrResultCache = new TimedImageResultCache<Awaited<ReturnType<typeof performOCR>>>();
+type NamedMatches = Awaited<ReturnType<typeof import("./named-analysis").analyzeNamedImage>>;
+const visionResultCache = new TimedImageResultCache<NamedMatches>();
+setInterval(() => { ocrResultCache.prune(); visionResultCache.prune(); }, 60 * 60 * 1000).unref();
 
 /**
  * 저배터리 자동 종료. **기본은 꺼져 있고**(0), 값을 주면 그 퍼센트에서 PC를 끈다.
@@ -285,6 +289,7 @@ async function runJob(job: Job, attemptId: string) {
   let regions = 0;
   let fetched = 0;
   const analyzed = new JobImageCache<Awaited<ReturnType<typeof performOCR>>>();
+  const analysisKey = JSON.stringify([searchLists, cfg.ocr]);
 
   for (const [imageIndex, url] of job.imageUrls.entries()) {
     const imageRef = {
@@ -310,25 +315,32 @@ async function runJob(job: Job, attemptId: string) {
       continue;
     }
 
-    const buffer = await fetchImage(url);
-    if (!buffer) {
-      appendAnalysisLog({ event: "image_result", ...imageRef, status: "fetch_failed" });
-      continue;
-    }
-    fetched++;
-
     const started = Date.now();
-    const imageSha256 = nodeCrypto.createHash("sha256").update(buffer).digest("hex");
-    let result;
+    const cached = ocrResultCache.get(url, analysisKey);
+    let result = cached?.result;
+    let imageSha256 = cached?.imageSha256;
+    let bytes = cached?.bytes;
     let reusedFromImageUrl: string | undefined;
-    try {
-      ({ result, reusedFromImageUrl } = await analyzed.getOrAnalyze(
-        imageSha256, url, () => performOCR(buffer, searchLists, cfg.ocr),
-      ));
-    } catch (e: any) {
-      appendAnalysisLog({ event: "image_result", ...imageRef, status: "ocr_failed", imageSha256, error: e.message });
-      throw e;
+    if (!cached) {
+      const buffer = await fetchImage(url);
+      if (!buffer) {
+        appendAnalysisLog({ event: "image_result", ...imageRef, status: "fetch_failed" });
+        continue;
+      }
+      imageSha256 = nodeCrypto.createHash("sha256").update(buffer).digest("hex");
+      bytes = buffer.length;
+      try {
+        ({ result, reusedFromImageUrl } = await analyzed.getOrAnalyze(
+          imageSha256, url, () => performOCR(buffer, searchLists, cfg.ocr),
+        ));
+      } catch (e: any) {
+        appendAnalysisLog({ event: "image_result", ...imageRef, status: "ocr_failed", imageSha256, error: e.message });
+        throw e;
+      }
+      ocrResultCache.set(url, analysisKey, result, imageSha256, bytes);
     }
+    if (!result) throw new Error("OCR result missing after cache lookup");
+    fetched++;
     regions += result.regions;
     for (const line of result.found) found.add(line);
     for (const keyword of result.matchedKeywords) matchedKeywords.add(keyword);
@@ -336,13 +348,13 @@ async function runJob(job: Job, attemptId: string) {
       if (detail.keyword && detail.excludedBy.length) excluded.push({ imageUrl: url, keyword: detail.keyword, terms: detail.excludedBy });
     }
     appendAnalysisLog({
-      event: "image_result", ...imageRef, status: reusedFromImageUrl ? "reused" : "analyzed", imageSha256,
+      event: "image_result", ...imageRef, status: cached ? "cached" : reusedFromImageUrl ? "reused" : "analyzed", imageSha256,
       reusedFromImageUrl,
-      bytes: buffer.length, found: result.found, detail: result.detail, regions: result.regions,
+      bytes, found: result.found, detail: result.detail, regions: result.regions,
       elapsedMs: Date.now() - started,
     });
     console.log(
-      `Image analyzed - jobId: ${job.jobId}, url: ${url}, ms: ${Date.now() - started}, regions: ${result.regions}, found: ${result.found.length}, reusedFrom: ${reusedFromImageUrl || "none"}`,
+      `Image analyzed - jobId: ${job.jobId}, url: ${url}, ms: ${Date.now() - started}, regions: ${result.regions}, found: ${result.found.length}, source: ${cached ? "24h-url-cache" : reusedFromImageUrl ? "job-image-cache" : "inference"}, reusedFrom: ${reusedFromImageUrl || "none"}`,
     );
   }
 
@@ -365,6 +377,9 @@ async function runVisionJob(job: Job, attemptId: string) {
   let fetched = 0;
   const cfg = loadConfig();
   const analyzed = new JobImageCache<Awaited<ReturnType<typeof analyzeNamedImage>>>();
+  const { getDB } = await import("./db");
+  const galleryRevision = (getDB().prepare("PRAGMA data_version").get() as { data_version: number }).data_version;
+  const analysisKey = JSON.stringify([names.slice().sort(), cfg, galleryRevision]);
   for (const [imageIndex, url] of job.imageUrls.entries()) {
     const imageRef = { mode: "worker" as const, kind: "image" as const, workerId: WORKER_ID,
       attemptId, jobId: job.jobId, postUrl: job.postUrl, imageIndex, imageUrl: url };
@@ -379,29 +394,37 @@ async function runVisionJob(job: Job, attemptId: string) {
       appendAnalysisLog({ event: "image_result", ...imageRef, status: "rejected_url" });
       continue;
     }
-    let fetchError = "image fetch failed";
-    const buffer = await fetchImage(url, error => { fetchError = error; });
-    if (!buffer) {
-      warnings.push(`${url}: ${fetchError}`);
-      appendAnalysisLog({ event: "image_result", ...imageRef, status: "fetch_failed", error: fetchError });
-      continue;
-    }
-    fetched++;
     const started = Date.now();
-    const imageSha256 = nodeCrypto.createHash("sha256").update(buffer).digest("hex");
-    let result;
+    const cached = visionResultCache.get(url, analysisKey);
+    let result = cached?.result;
+    let imageSha256 = cached?.imageSha256;
+    let bytes = cached?.bytes;
     let reusedFromImageUrl: string | undefined;
-    try {
-      ({ result, reusedFromImageUrl } = await analyzed.getOrAnalyze(
-        imageSha256, url, () => analyzeNamedImage(buffer, names, cfg),
-      ));
-    } catch (e: any) {
-      appendAnalysisLog({ event: "image_result", ...imageRef, status: "analysis_failed", imageSha256, error: summarizeAnalysisError(e) });
-      throw e;
+    if (!cached) {
+      let fetchError = "image fetch failed";
+      const buffer = await fetchImage(url, error => { fetchError = error; });
+      if (!buffer) {
+        warnings.push(`${url}: ${fetchError}`);
+        appendAnalysisLog({ event: "image_result", ...imageRef, status: "fetch_failed", error: fetchError });
+        continue;
+      }
+      imageSha256 = nodeCrypto.createHash("sha256").update(buffer).digest("hex");
+      bytes = buffer.length;
+      try {
+        ({ result, reusedFromImageUrl } = await analyzed.getOrAnalyze(
+          imageSha256, url, () => analyzeNamedImage(buffer, names, cfg),
+        ));
+      } catch (e: any) {
+        appendAnalysisLog({ event: "image_result", ...imageRef, status: "analysis_failed", imageSha256, error: summarizeAnalysisError(e) });
+        throw e;
+      }
+      visionResultCache.set(url, analysisKey, result, imageSha256, bytes);
     }
+    if (!result) throw new Error("Image result missing after cache lookup");
+    fetched++;
     matches.push(...result.map(match => ({ ...match, imageUrl: url })));
-    appendAnalysisLog({ event: "image_result", ...imageRef, status: reusedFromImageUrl ? "reused" : "analyzed", imageSha256,
-      reusedFromImageUrl, bytes: buffer.length, names, matches: result, elapsedMs: Date.now() - started });
+    appendAnalysisLog({ event: "image_result", ...imageRef, status: cached ? "cached" : reusedFromImageUrl ? "reused" : "analyzed", imageSha256,
+      reusedFromImageUrl, bytes, names, matches: result, elapsedMs: Date.now() - started });
   }
   const error = names.length > 0 && fetched === 0 ? `none of ${job.imageUrls.length} images could be fetched` : null;
   return { found: foundNames(matches, names, registeredKinds()), regions: 0, error, matches, skippedNames, warnings };

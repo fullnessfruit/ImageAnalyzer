@@ -78,7 +78,7 @@ npm run server           # manual HTTP API; the extension uses the broker worker
 
 Models (~815 MiB) download automatically on first run.
 `server.bat` starts the full broker worker (OCR, faces, characters and costumes); `server_local.bat` selects the local broker at 127.0.0.1:3100. Use `server-ocr.bat` / `server-ocr_local.bat` for OCR only. All workers use the same broker and `OCR_BROKER_SECRET` as VoiceAnalyzer, and open no incoming port. The extension sends its shared target-name list; names exactly match registered data folders. Run the existing registration commands after adding reference images. The manual HTTP API remains available via `npm run server`.
-If a target name exists in both a character and costume gallery, plain `上原歩夢` requires an identity hit for `found`; costume hits still appear in typed `matches`. Add `costume:上原歩夢` to the extension's media-analysis names to request the outfit independently. The worker returns that exact target string in `found` for a costume hit. `character:<name>` and `face:<name>` select one gallery kind explicitly. The current 上原歩夢 costume gallery also matches several similar but different outfits in the labeled samples, so the explicit costume target will report those false positives until its classifier is improved.
+If a target name exists in both a character and costume gallery, plain `上原歩夢` requires an identity hit for `found`; costume hits still appear in typed `matches`. Add `costume:上原歩夢` to the extension's media-analysis names to request the outfit independently. The worker returns that exact target string in `found` for a costume hit. `character:<name>` and `face:<name>` select one gallery kind explicitly. Costume matches require both a gallery similarity score and evidence of a distinctive clothing tag from a reference image; this rejects the similar but different outfits in the labeled samples while retaining the tested school-uniform matches.
 
 ### Labeled OCR samples
 
@@ -130,6 +130,11 @@ and the full OCR/face/character/costume result. CLI runs record the local `file:
 with `mode: "cli"`, keeping manual tests distinguishable from worker operations. Without an HTTP
 `imageUrl`, the server cannot recover the original URL from uploaded bytes. This field is metadata
 only and is not fetched or verified. Image bytes are not kept.
+Broker workers keep successful OCR and named-image results in memory for 24 hours per exact image URL
+and analysis inputs. A repeat job with the same search list or requested names and settings reuses the
+result without downloading the image. Changed OCR settings or a changed gallery bypass the old entry.
+Cache hits still write request and result log lines with `status: "cached"`; restarting the worker clears
+the cache.
 The log files are ignored by Git and are not deleted automatically. For example, search them with
 `rg '"imageUrl":"https://pbs.twimg.com/' log/`.
 
@@ -146,6 +151,8 @@ curl -X POST http://localhost:3000/analyze \
 # Without the field, the server falls back to searchStrings.tsv
 curl -X POST http://localhost:3000/analyze -F "image=@test.jpg"
 ```
+
+The response below illustrates the fields; the scores and names are placeholders, not one measured image.
 
 ```json
 {
@@ -172,8 +179,8 @@ curl -X POST http://localhost:3000/analyze -F "image=@test.jpg"
 
 ```json
 {
-  "similarityThreshold": { "face": 0.45, "faceWeak": 0.28, "character": 0.82, "costume": 0.52 },
-  "margin":              { "face": 0.06, "character": 0.04, "costume": 0.05 },
+  "similarityThreshold": { "face": 0.5, "faceWeak": 0.28, "faceWeakByName": { "大西亜玖璃": 0.49, "楡井希実": 0.32 }, "facePose": 0.5, "character": 0.85, "costume": 0.52 },
+  "margin":              { "face": 0.06, "facePose": 0.3, "character": 0.04, "costume": 0.05 },
   "ocr":                 { "scoreThreshold": 0.5, "detScales": [960, 1600] },
   "wdTagger":            { "characterTagThreshold": 0.6 },
   "characterAliases":    { "tagger_tag_name": "character-a" },
@@ -184,16 +191,16 @@ curl -X POST http://localhost:3000/analyze -F "image=@test.jpg"
 Thresholds are **not comparable across tasks** - each model has its own cosine distribution. A value
 like 0.8, reasonable for CCIP, rejects every genuine ArcFace match.
 
-Faces are reported in two bands so that a photographed photo is not accepted as the real thing but is
-not silently dropped either. Measured on one image containing both: the live subject scores 0.7854 and
-lands in `faces`; the framed photo of her scores 0.3221 and lands in `facesWeak`; a different person
-scores 0.1474 and is not reported at all.
+Faces are reported in two bands so that lower-scoring captures can be reviewed without being accepted
+as confirmed identities. `faceWeakByName` overrides the weak reporting floor for known identities;
+other names use `faceWeak`. The current labeled images had ten wrong-name weak candidates and no
+confirmed weak positive, so photographed-photo recall still needs a verified positive sample.
 
 | Band | Range | Meaning |
 |---|---|---|
-| `faces` | ≥ `face` (0.45) | accepted as the real subject |
-| `facesWeak` | `faceWeak` … `face` | uncertain capture or pose - do not act on automatically |
-| - | < `faceWeak` (0.28) | not reported |
+| `faces` | ≥ `face` (0.5) | accepted as the real subject |
+| `facesWeak` | per-name weak floor … `face` | uncertain capture or pose - do not act on automatically |
+| - | < per-name weak floor (or default 0.28) | not reported |
 
 A match must clear both the absolute threshold and the **top-1 minus top-2 margin**. If top-1 and
 top-2 are close, the match is meaningless regardless of its absolute score, and reporting "unknown"
