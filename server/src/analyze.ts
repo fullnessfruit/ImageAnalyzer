@@ -22,6 +22,7 @@ import {
   MIN_FACE_SIZE,
   extractCcipEmbedding,
   runTagger,
+  costumeAnchorMatch,
   cropRegion,
   cropWithMask,
   hasArcFace,
@@ -33,10 +34,17 @@ import {
 
 export interface Config {
   /**
-   * face는 "실물"로 인정하는 값, faceWeak는 그 아래 보고만 하는 하한이다.
-   * 사진 속 사진처럼 화질이 열화된 동일 인물은 두 값 사이에 떨어진다.
+   * face는 확정 판정 경계다. faceWeak는 검토용 하한이며, 신원별 오검출 분포가
+   * 확인된 이름은 faceWeakByName으로 별도 하한을 둔다.
    */
-  similarityThreshold: { face: number; faceWeak: number; facePose: number; character: number; costume: number };
+  similarityThreshold: {
+    face: number;
+    faceWeak: number;
+    faceWeakByName: Record<string, number>;
+    facePose: number;
+    character: number;
+    costume: number;
+  };
   margin: { face: number; facePose: number; character: number; costume: number };
   ocr: { scoreThreshold: number; detScales: number[] };
   wdTagger: { characterTagThreshold: number };
@@ -54,12 +62,20 @@ export interface Config {
 
 /**
  * 임계값은 모델마다 코사인 분포가 달라 서로 비교 불가능한 스케일 위에 있다.
- * 얼굴은 실측 분포가 명확히 갈린다 - 실물 동일 인물 0.64~0.97, 사진 속 사진 0.32,
- * 다른 인물 0.15. 그래서 0.45를 실물 경계로, 0.28을 보고 하한으로 둔다.
+ * 확인된 본인 얼굴 최저는 0.514, 다른 인물의 최고는 0.4875이므로 0.5를
+ * 확정 경계로 둔다. 기본 약한 하한은 0.28이지만 오검출이 확인된 두 이름은
+ * 이름별로 높인다. 사진 속 실제 본인 얼굴의 약한 점수 분포는 아직 검증되지 않았다.
  * ArcFace에서 0.8 같은 값은 동일 인물조차 전부 기각한다.
  */
 export const DEFAULT_CONFIG: Config = {
-  similarityThreshold: { face: 0.45, faceWeak: 0.28, facePose: 0.5, character: 0.82, costume: 0.52 },
+  similarityThreshold: {
+    face: 0.5,
+    faceWeak: 0.28,
+    faceWeakByName: { "大西亜玖璃": 0.49, "楡井希実": 0.32 },
+    facePose: 0.5,
+    character: 0.85,
+    costume: 0.52,
+  },
   margin: { face: 0.06, facePose: 0.3, character: 0.04, costume: 0.05 },
   ocr: { scoreThreshold: 0.5, detScales: [960, 1600] },
   wdTagger: { characterTagThreshold: 0.6 },
@@ -82,7 +98,7 @@ export interface AnalyzeResult {
   ocr: OcrResult;
   /** 실물로 판정된 얼굴. */
   faces: Match[];
-  /** faceWeak 이상 face 미만. 재촬영·열화·포즈 차이 등 원인과 무관하게 검토만 한다. */
+  /** 신원별 약한 하한 이상 face 미만. 원인과 무관하게 검토만 한다. */
   facesWeak: Match[];
   /** 등록된 태거 이름만 지지하고 CCIP는 임계값을 넘지 못한 검토용 결과. */
   charactersWeak: Match[];
@@ -110,6 +126,13 @@ async function recognizeFaces(
   const raw = await loadRaw(imageBuffer);
   const strong: Match[] = [];
   const weak: Match[] = [];
+  const weakThresholdFor = (name: string): number => {
+    const override = cfg.similarityThreshold.faceWeakByName?.[name];
+    return typeof override === "number" && Number.isFinite(override) &&
+      override >= 0 && override <= cfg.similarityThreshold.face
+      ? override
+      : cfg.similarityThreshold.faceWeak;
+  };
 
   for (const det of faces) {
     if (!det.landmarks || det.box[2] < MIN_FACE_SIZE || det.box[3] < MIN_FACE_SIZE) continue;
@@ -123,7 +146,7 @@ async function recognizeFaces(
     const best = matchGallery(
       embedding,
       gallery,
-      extremePose ? cfg.similarityThreshold.facePose : cfg.similarityThreshold.faceWeak,
+      extremePose ? cfg.similarityThreshold.facePose : weakThresholdFor,
       extremePose ? cfg.margin.facePose : cfg.margin.face,
       extremePose ? "face-pose" : "face",
     );
@@ -275,9 +298,13 @@ async function recognizeCostumes(
     const tagged = await runTagger(region, cfg.wdTagger.characterTagThreshold);
     if (!tagged) continue;
 
+    const anchorCompatibleGallery = gallery.map(entry => ({
+      ...entry,
+      vectors: entry.vectors.filter(reference => costumeAnchorMatch(tagged.costumeVector, reference)),
+    })).filter(entry => entry.vectors.length > 0);
     const best = matchGallery(
       l2normalize(tagged.costumeVector),
-      gallery,
+      anchorCompatibleGallery,
       cfg.similarityThreshold.costume,
       cfg.margin.costume,
       "costume",

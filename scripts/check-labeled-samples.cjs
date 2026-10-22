@@ -37,6 +37,7 @@ async function main() {
     const optional = label.optionalOcr || [];
     const absentOcr = label.absentOcr || [];
     const absentNames = label.absentNames || [];
+    const absentCostumes = label.absentCostumes || [];
     const terms = [...new Set([...expectedOcr, ...optional, ...absentOcr])];
     const errors = [];
     try {
@@ -54,6 +55,11 @@ async function main() {
       for (const name of absentNames) if (!registered.has(name)) errors.push(`absence target not registered: ${name}`);
       const namedMatches = selectNamedMatches(result, absentNames, registered);
       for (const name of foundNames(namedMatches, absentNames, registered)) errors.push(`unexpected found name: ${name}`);
+      for (const name of absentCostumes) if (!registered.get(name)?.has("costume")) errors.push(`absent costume not registered: ${name}`);
+      for (const name of absentCostumes) if (result.costumes.some(costume => costume.name === name)) errors.push(`unexpected costume: ${name}`);
+      for (const name of label.absentWeakFaces || []) {
+        if (result.facesWeak.some(face => face.name === name)) errors.push(`unexpected weak face: ${name}`);
+      }
       for (const term of expectedOcr) if (!result.ocr.found.includes(term)) errors.push(`OCR missing: ${term}`);
       for (const term of absentOcr) if (result.ocr.found.includes(term)) errors.push(`unexpected OCR: ${term}`);
       console.log(`Labeled sample - ${JSON.stringify({ file, label, faces: result.faces, facesWeak: result.facesWeak, characters: result.characters, charactersWeak: result.charactersWeak, costumes: result.costumes, namedMatches, missingLabeledCharacters: expectedCharacters.filter(name => !foundCharacters.includes(name)), ocr: terms.map(term => ({ term, required: expectedOcr.includes(term), forbidden: absentOcr.includes(term), found: result.ocr.found.includes(term), score: result.ocr.detail.find(item => item.list === term)?.parts[0]?.score ?? 0 })), detections: result._detections, elapsedMs: result._elapsedMs, errors })}`);

@@ -599,6 +599,28 @@ export interface TaggerResult {
   topClothing: { name: string; prob: number }[];
 }
 
+/**
+ * 등록 벡터는 DB에서 L2 정규화되어 크기를 잃는다. IDF를 나눈 성분의 상대 크기로
+ * 참조 의상의 강한 태그를 찾고, 희귀한 상위 세 태그 중 하나가 질의에서 실제로
+ * 0.5 이상인지 확인한다. 또한 참조에서 충분히 강한 태그 중 가장 희귀한 것도
+ * 질의에 있어야 한다. 공통적인 dress/frills나 장갑만으로 다른 의상을 확정하지 않기 위함이다.
+ */
+export function costumeAnchorMatch(query: Float32Array, reference: Float32Array): boolean {
+  if (query.length !== clothingTagIndices.length || reference.length !== clothingTagIndices.length) return false;
+  const strengths = clothingTagIndices.map((tagIndex, i) => reference[i] / wdTags[tagIndex].idf);
+  const strongest = Math.max(...strengths);
+  if (!(strongest > 0)) return false;
+  const anchors = strengths.map((strength, i) => ({ strength, i }))
+    .filter(({ strength }) => strength >= strongest * 0.75)
+    .sort((a, b) => wdTags[clothingTagIndices[b.i]].idf - wdTags[clothingTagIndices[a.i]].idf)
+    .slice(0, 3);
+  const distinctive = strengths.map((strength, i) => ({ strength, i }))
+    .filter(({ strength }) => strength >= strongest * 0.6)
+    .sort((a, b) => wdTags[clothingTagIndices[b.i]].idf - wdTags[clothingTagIndices[a.i]].idf)[0];
+  if (!distinctive || query[distinctive.i] / wdTags[clothingTagIndices[distinctive.i]].idf < 0.5) return false;
+  return anchors.some(({ i }) => query[i] / wdTags[clothingTagIndices[i]].idf >= 0.5);
+}
+
 /** 태그별 원시 확률. 임계값 조정과 진단에 쓴다. */
 export async function taggerProbs(imageBuffer: Buffer): Promise<{ probs: Float32Array; tags: WdTag[] } | null> {
   if (!wdTaggerSession || wdTags.length === 0) return null;

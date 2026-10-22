@@ -19,8 +19,17 @@ export function loadConfig(projectRoot: string = PROJECT_ROOT): Config {
   const configPath = path.join(projectRoot, "config.json");
   try {
     const raw = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+    const thresholds = raw.similarityThreshold ?? {};
     return {
-      similarityThreshold: { ...DEFAULT_CONFIG.similarityThreshold, ...(raw.similarityThreshold ?? {}) },
+      similarityThreshold: {
+        ...DEFAULT_CONFIG.similarityThreshold,
+        ...thresholds,
+        faceWeakByName: {
+          ...DEFAULT_CONFIG.similarityThreshold.faceWeakByName,
+          ...(thresholds.faceWeakByName && typeof thresholds.faceWeakByName === "object" &&
+            !Array.isArray(thresholds.faceWeakByName) ? thresholds.faceWeakByName : {}),
+        },
+      },
       margin: { ...DEFAULT_CONFIG.margin, ...(raw.margin ?? {}) },
       ocr: { ...DEFAULT_CONFIG.ocr, ...(raw.ocr ?? {}) },
       wdTagger: { ...DEFAULT_CONFIG.wdTagger, ...(raw.wdTagger ?? {}) },

@@ -50,8 +50,12 @@ function loadSampleLabels() {
       if (!knownPeople.has(name) && !knownCharacters.has(name)) throw new Error(`Uncataloged absent name: ${file} ${name}`);
       if (entryPeople.includes(name) || entryCharacters.includes(name)) throw new Error(`Name both present and absent: ${file} ${name}`);
     }
+    uniqueNames(entry.absentCostumes || [], `${file}.absentCostumes`);
     for (const name of uniqueNames(entry.faceChecks || [], `${file}.faceChecks`)) {
       if (!entryPeople.includes(name)) throw new Error(`Face check without person label: ${file} ${name}`);
+    }
+    for (const name of uniqueNames(entry.absentWeakFaces || [], `${file}.absentWeakFaces`)) {
+      if (!knownPeople.has(name)) throw new Error(`Uncataloged weak-face absence: ${file} ${name}`);
     }
     for (const term of uniqueNames(entry.ocr || [], `${file}.ocr`)) seenOcr.add(term);
     for (const term of uniqueNames(entry.optionalOcr || [], `${file}.optionalOcr`)) seenOcr.add(term);

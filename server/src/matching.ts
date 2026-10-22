@@ -52,13 +52,15 @@ function scoreEntry(query: Float32Array, entry: GalleryEntry, mode: ScoreMode): 
 }
 
 /**
- * 임계값과 마진을 모두 통과한 경우에만 매칭을 반환한다.
+ * 최고 점수 신원을 먼저 고른 다음 그 신원의 임계값과 마진을 확인한다.
+ * 임계값 미달 시 2위로 대체하지 않는다. 이름별 임계값은 얼굴의 약한
+ * 결과에 사용하고, 나머지 과제는 공통 숫자 임계값을 사용한다.
  * 통과하지 못하면 null - 틀린 이름을 내는 것보다 "모름"이 낫다.
  */
 export function matchGallery(
   query: Float32Array,
   gallery: GalleryEntry[],
-  threshold: number,
+  threshold: number | ((name: string) => number),
   minMargin: number,
   label?: string,
   scoreMode: ScoreMode = "hybrid",
@@ -79,11 +81,12 @@ export function matchGallery(
 
   const runnerUp = second < 0 ? 0 : second;
   const margin = best.score - runnerUp;
-  const passed = best.score >= threshold && margin >= minMargin;
+  const appliedThreshold = typeof threshold === "number" ? threshold : threshold(best.name);
+  const passed = best.score >= appliedThreshold && margin >= minMargin;
 
   if (label) {
     console.log(
-      `[${label}] best="${best.name}" score=${best.score.toFixed(4)} runnerUp=${runnerUp.toFixed(4)} margin=${margin.toFixed(4)} thr=${threshold} minMargin=${minMargin} → ${passed ? "MATCH" : "REJECT"}`,
+      `[${label}] best="${best.name}" score=${best.score.toFixed(4)} runnerUp=${runnerUp.toFixed(4)} margin=${margin.toFixed(4)} thr=${appliedThreshold} minMargin=${minMargin} → ${passed ? "MATCH" : "REJECT"}`,
     );
   }
 
