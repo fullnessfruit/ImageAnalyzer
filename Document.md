@@ -329,6 +329,17 @@ ImageAnalyzer 음성의 **불일치**이지 정답 자료가 아니므로 이미
 
 ## 파일별 상세
 
+### package.json / package-lock.json
+**역할**: Node.js 실행·빌드 의존성 관리. 갤러리 DB용 `better-sqlite3`는 Node.js 26용
+Windows 바이너리가 있는 12.10.1 이상을 사용한다. `package-lock.json`은 실제 설치 버전을
+고정하므로 Node.js를 갱신한 머신에서는 잠금 파일에 맞춰 다시 설치하면 된다.
+
+이 머신의 npm 11.20은 미승인 의존성의 설치 스크립트를 기본적으로 실행하지 않는다. `allowScripts`는
+잠금 파일에 설치된 `better-sqlite3`, `onnxruntime-node`, `sharp`의 정확한 버전만 허용한다.
+세 패키지가 각각 SQLite 바인딩, ONNX Runtime, 이미지 처리 바이너리를 준비하므로 새
+머신에서 `npm install`/`npm ci`를 할 때 이 승인 목록이 필요하다. 패키지 버전을 바꾸면
+해당 항목도 새 설치 버전에 맞춰 갱신한다.
+
 ### config.json
 ```json
 {
