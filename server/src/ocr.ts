@@ -7,7 +7,7 @@
  * 핵심 설계 - greedy 디코딩 후 부분문자열 비교를 하지 않는다.
  * greedy는 타임스텝마다 argmax를 취하므로 정답 후보 집합을 전혀 활용하지 못하고,
  * 정확 일치 확률이 문자당 정확도의 L제곱으로 떨어진다(5글자면 p=0.95라도 0.77).
- * 대신 CTC 격자 위에서 후보 문자열의 사후확률을 직접 계산한다. 탐색 공간이
+ * 대신 CTC 격자 위에서 후보 문자열의 경로 점수를 직접 계산한다. 탐색 공간이
  * |사전|^T 에서 검색어 개수로 붕괴하므로, 한 글자가 2위로 밀려도 매칭이 살아남는다.
  *
  * 매칭 규칙: 한 줄 = 하나의 리스트. 줄 안의 탭 구분 파트는 모두 존재해야 한다(AND).
@@ -742,7 +742,9 @@ function logAdd(a: number, b: number): number {
  * "아직 시작 안 함"으로 두고 항상 확률 1로 유지해 앞쪽 임의 문자열을 허용하고,
  * 마지막 글자에 도달한 시점의 최대값을 취해 뒤쪽 임의 문자열도 허용한다.
  *
- * 문자당 기하평균 확률 P^(1/L)과 최고 점수의 종료 타임스텝을 반환한다.
+ * 누적 경로 가중치의 문자당 기하평균과 최고 점수의 종료 타임스텝을 반환한다.
+ * 시작 상태를 모든 시점에서 1로 유지해 여러 시작 경로를 합산하므로 점수는
+ * 정규화된 확률이 아니며 1을 넘을 수 있다.
  * 전자는 길이가 다른 검색어의 점수를 비교하고, 후자는 가까운 위치의 경쟁 읽기만 대조한다.
  */
 function ctcKeywordScore(lat: Lattice, classIds: number[][]): { score: number; endStep: number } {
@@ -1056,10 +1058,11 @@ export async function performOCR(
           }
         }
 
-        // 다른 모델이 같은 위치의 대체 읽기를 훨씬 강하게 지지하면 반증으로 쓴다.
-        // ja 후보에는 v5 증거를 바로 적용한다. v5 후보는 자기 격자에서도 대체
-        // 읽기가 거의 동점일 때만 ja 증거를 허용한다. 그렇지 않으면 정확한
-        // v5의 めぐり가 ja의 あぐり 오독 때문에 버려진다.
+        // 다른 모델이 같은 위치의 대체 읽기를 강하게 지지하면 반증으로 쓴다.
+        // ja 후보도 자기 격자에서 대체 읽기가 근접하면 v5의 우세를 반영한다.
+        // 반대로 ja가 대체 읽기를 거의 지지하지 않으면 기존의 강한(2배) 반증을
+        // 요구한다. v5 후보는 자기 격자에서도 대체 읽기가 거의 동점일 때만 ja
+        // 증거를 허용해 정확한 v5의 めぐり를 ja의 あぐり 오독으로 버리지 않는다.
         for (const [otherKind, otherLattices] of latticesByKind) {
           const jaCandidate = hit.kind === "ja" && otherKind === "v5";
           const v5Ambiguous = hit.kind === "v5" && otherKind === "ja" &&
@@ -1074,7 +1077,11 @@ export async function performOCR(
           const otherRival = ctcKeywordScore(otherLat, otherRivalIds);
           if (otherRival.score < opts.scoreThreshold || Math.abs(otherRival.endStep / otherLat.T - hit.endStep / lat.T) > 0.1) continue;
           const otherTarget = ctcKeywordScore(otherLat, otherTargetIds);
-          if (otherRival.score < otherTarget.score * 2) continue;
+          const sameModelAmbiguous = jaCandidate && match.score >= opts.scoreThreshold &&
+            match.score >= hit.score * 0.75 &&
+            Math.abs(match.endStep - hit.endStep) <= Math.max(2, Math.round(lat.T * 0.1));
+          const requiredRatio = sameModelAmbiguous ? 1.25 : 2;
+          if (otherRival.score < otherTarget.score * requiredRatio) continue;
           if (!competing || otherRival.score > competing.rivalScore) {
             competing = { rival, rivalScore: otherRival.score, targetScore: otherTarget.score, candidateScore: hit.score, kind: otherKind };
           }

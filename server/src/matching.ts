@@ -40,7 +40,7 @@ export interface MatchResult {
  */
 export type ScoreMode = "hybrid" | "max";
 
-function scoreEntry(query: Float32Array, entry: GalleryEntry, mode: ScoreMode): number {
+export function scoreEntry(query: Float32Array, entry: GalleryEntry, mode: ScoreMode): number {
   let maxSim = -1;
   for (const v of entry.vectors) {
     const s = cosineSimilarity(query, v);

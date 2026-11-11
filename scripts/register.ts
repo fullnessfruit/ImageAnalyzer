@@ -2,6 +2,7 @@
  * 갤러리 등록 - face / character / costume 공통 드라이버.
  *
  *   data/faces/<인물명>/*.jpg      → SCRFD 최대 얼굴 → 랜드마크 정합 → ArcFace
+ *   같은 승인 얼굴 사진           → 독립 GlintR100 모델의 확인용 임베딩
  *   data/characters/<캐릭터명>/*   → 애니 인물 검출 → CCIP
  *   data/costumes/<의상명>/*       → 애니 인물 검출 → 머리 마스킹 → WD-Tagger 의류 태그 벡터
  *
@@ -27,6 +28,8 @@ import {
   detectionsInside,
   alignFace,
   extractFaceEmbedding,
+  extractFaceVerifierEmbedding,
+  hasFaceVerifier,
   faceQualityOk,
   extractCcipEmbedding,
   runTagger,
@@ -54,7 +57,7 @@ function largest(dets: Detection[]): Detection | null {
   return dets.reduce((a, b) => (a.box[2] * a.box[3] >= b.box[2] * b.box[3] ? a : b));
 }
 
-async function extractFace(buffer: Buffer): Promise<Float32Array | null> {
+async function alignedRegisteredFace(buffer: Buffer): Promise<Buffer | null> {
   const faces = await detectFaces(buffer);
   const best = largest(faces);
   if (!best) {
@@ -70,7 +73,17 @@ async function extractFace(buffer: Buffer): Promise<Float32Array | null> {
     return null;
   }
   const raw = await loadRaw(buffer);
-  return extractFaceEmbedding(alignFace(raw, best.landmarks));
+  return alignFace(raw, best.landmarks);
+}
+
+async function extractFace(buffer: Buffer): Promise<Float32Array | null> {
+  const aligned = await alignedRegisteredFace(buffer);
+  return aligned ? extractFaceEmbedding(aligned) : null;
+}
+
+async function extractFaceVerifier(buffer: Buffer): Promise<Float32Array | null> {
+  const aligned = await alignedRegisteredFace(buffer);
+  return aligned ? extractFaceVerifierEmbedding(aligned) : null;
 }
 
 async function extractCharacter(buffer: Buffer): Promise<Float32Array | null> {
@@ -104,6 +117,7 @@ async function extractCostume(buffer: Buffer): Promise<Float32Array | null> {
 
 const SPECS: Record<string, KindSpec> = {
   face: { kind: "face", space: "arcface", dir: "faces", extract: extractFace },
+  "face-verifier": { kind: "face-verifier", space: "glintr100", dir: "faces", extract: extractFaceVerifier },
   character: { kind: "character", space: "ccip", dir: "characters", extract: extractCharacter },
   costume: { kind: "costume", space: "wdtag", dir: "costumes", extract: extractCostume },
 };
@@ -161,7 +175,8 @@ async function registerKind(spec: KindSpec): Promise<void> {
 
 async function main() {
   const arg = (process.argv[2] || "all").toLowerCase();
-  const targets = arg === "all" ? Object.values(SPECS) : [SPECS[arg]];
+  const targets = arg === "all" ? Object.values(SPECS) :
+    arg === "face" ? [SPECS.face, SPECS["face-verifier"]] : [SPECS[arg]];
   if (targets.some((t) => !t)) {
     console.error(`Unknown kind: ${arg}. Use one of: face, character, costume, all`);
     process.exit(1);
@@ -170,6 +185,9 @@ async function main() {
   await ensureModelsDownloaded(MODELS_DIR);
   initDB(DB_DIR);
   await loadModels(MODELS_DIR);
+  if (targets.some((spec) => spec.kind === "face-verifier") && !hasFaceVerifier()) {
+    throw new Error("Face verifier model unavailable; registration would leave the face gallery incomplete");
+  }
 
   for (const spec of targets) await registerKind(spec);
 }

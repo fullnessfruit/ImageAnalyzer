@@ -11,10 +11,13 @@ import fs from "fs";
 import path from "path";
 import https from "https";
 import http from "http";
+import crypto from "crypto";
 
 interface ModelInfo {
   url: string;
   filename: string;
+  /** 고정된 외부 모델 바이트를 검증한다. 잘못된 가중치와 전처리의 조합을 막는다. */
+  sha256?: string;
   /** 없어도 서버가 기동하는 모델은 optional. 해당 기능만 비활성화된다. */
   optional?: boolean;
 }
@@ -67,6 +70,11 @@ export const MODELS = {
   arcface: {
     url: `${HF}/public-data/insightface/resolve/main/models/buffalo_l/w600k_r50.onnx`,
     filename: "arcface-w600k-r50.onnx",
+  },
+  "face-verifier": {
+    url: `${HF}/ByteDance/InfiniteYou/resolve/3ce7c3ae31659832d1ea3cf9a1937b63352b1ed0/insightface/models/antelopev2/glintr100.onnx`,
+    filename: "arcface-glintr100.onnx",
+    sha256: "4ab1d6435d639628a6f3e5008dd4f929edf4c4124b1a7169e1048f9fef534cdf",
   },
 
   // --- 캐릭터 ---
@@ -193,8 +201,14 @@ export const OCR_MODEL_NAMES = [
   "ocr-dict-ko",
 ] as const;
 
+async function fileSha256(filePath: string): Promise<string> {
+  const hash = crypto.createHash("sha256");
+  for await (const chunk of fs.createReadStream(filePath)) hash.update(chunk);
+  return hash.digest("hex");
+}
+
 /**
- * `ocrOnly`이면 OCR 모델(약 43MiB)만 받는다. 나머지 6개(약 772MiB)는 받지도 로드하지도
+ * `ocrOnly`이면 OCR 모델(약 43MiB)만 받는다. 나머지 7개(약 1GiB)는 받지도 로드하지도
  * 않으므로 메모리가 작은 호스트에서도 기동할 수 있다.
  */
 export async function ensureModelsDownloaded(modelsDir: string, ocrOnly = false): Promise<void> {
@@ -207,11 +221,19 @@ export async function ensureModelsDownloaded(modelsDir: string, ocrOnly = false)
   const failed: string[] = [];
   for (const [name, info] of wanted) {
     const dest = path.join(modelsDir, info.filename);
-    if (fs.existsSync(dest) && fs.statSync(dest).size > 0) continue;
+    if (fs.existsSync(dest) && fs.statSync(dest).size > 0) {
+      if (!info.sha256 || await fileSha256(dest) === info.sha256) continue;
+      console.warn(`Model checksum mismatch - name: ${name}, path: ${dest} (다시 다운로드)`);
+      fs.rmSync(dest);
+    }
 
     console.log(`Downloading ${name}...`);
     try {
       await fetchToFile(info.url, dest, MAX_REDIRECTS);
+      if (info.sha256 && await fileSha256(dest) !== info.sha256) {
+        fs.rmSync(dest, { force: true });
+        throw new Error(`SHA-256 mismatch: ${name}`);
+      }
     } catch (err: any) {
       failed.push(name);
       console.error(`Download failed - model: ${name}, url: ${info.url}, error: ${err.message}`);

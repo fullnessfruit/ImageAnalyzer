@@ -4,11 +4,13 @@
 
 `ocr`는 실제로 적혀 있고 회귀 검사에서 찾아야 하는 검색어다. `optionalOcr`는 적혀 있지만 현행 인식 실패를 허용하고, `absentOcr`는 **적혀 있지 않은** 검색어라 검출되면 실패다. `ocrText`는 검색어와 다른 실제 표기 또는 줄 배치를 설명한다. `imageNotes`는 파일 전체의 매체·촬영 상황·판정 범위를, `subjectNotes`는 대상별 뒷모습·옆얼굴·위치를 설명한다. `faceChecks`는 기존 얼굴 회귀 검사의 필수 성공 대상이며, `people`에 기록된 모든 사람이 곧바로 얼굴 검사의 필수 성공 대상이 되는 것은 아니다. 얼굴이 거의 보이지 않는 신체 판정 시험 이미지는 `faceCheck: "skip"`이다. `absentWeakFaces`는 해당 이름의 `facesWeak` 결과가 나와서는 안 된다는 얼굴별 검사다. 한 이미지에 실제 인물의 확정 얼굴과 다른 사람에게 붙은 같은 이름의 약한 오검출이 동시에 있을 수 있으므로 `faceChecks`와 함께 쓸 수 있다. 캐릭터 라벨도 실제 등장 여부를 기록하며, 현재 검사기는 누락을 진단 출력으로 남긴다. `absentNames`는 브로커의 이름별 `found` 결과에 나오면 안 되는 등록 이름이다. `absentCostumes`는 그 이미지에서 실제로 보이지 않는 등록 의상이며, 의상 매칭 자체를 검사해 오검출을 실패로 센다. 같은 이름의 캐릭터와 의상이 모두 있을 때도 두 결과를 별도로 확인한다.
 
-열다섯 이미지의 `absent: "allCatalogedSubjects"`는 `subjectCatalog.people`과 `subjectCatalog.characters`에 **이름이 전부 적힌 대상 모두**가 그 이미지에 없다는 뜻이다. 목록에는 QMa 이미지에서 OCR 텍스트로만 라벨링한 相良茉優·内田秀도 포함한다. 다른 미등록 인물·캐릭터나 텍스트까지 없다는 뜻은 아니다. `unlabeledImages`는 파일은 있으나 확인된 정답이 없는 이미지다. 현재는 89장 전부에 확인한 정보가 있지만, **각 항목은 적힌 사실만 보증하는 부분 라벨**이다. 이름이 없다는 이유만으로 그 인물이 부재한다고 해석해서는 안 된다.
+열다섯 이미지의 `absent: "allCatalogedSubjects"`는 `subjectCatalog.people`과 `subjectCatalog.characters`에 **이름이 전부 적힌 대상 모두**가 그 이미지에 없다는 뜻이다. 목록에는 QMa 이미지에서 OCR 텍스트로만 라벨링한 相良茉優·内田秀도 포함한다. 다른 미등록 인물·캐릭터나 텍스트까지 없다는 뜻은 아니다. `images`의 103장은 확인한 정보가 있는 부분 라벨이며, `unlabeledImages`의 23장은 X 게시물 조사용 사진·연락시트라 얼굴·캐릭터 정답을 아직 확정하지 않았다. 조사 기록은 `x-investigation/gamers-README.md`와 `x-investigation/current-README.md`에 있다. 이름이 없다는 이유만으로 그 인물이 부재한다고 해석해서는 안 된다.
 
 과거 Claude 세션 기록 2개와 현재 세션의 사용자 설명·실험 기록을 대조하고 실제 이미지를 확인했다. `HT8Ro88agAAdTWa.jpg`는 사용자가 大西亜玖璃라고 지정한 뒷모습 평가 이미지다. `c02.png`·`c02a.png`·`c02s.png`와 `chara_01_*`·`face_01_*`는 上原歩夢 일러스트이고, `c02cv.png`는 담당 성우 大西亜玖璃의 실사 얼굴이다. `G0e2w21aEAA6Ndl.png`·`HFEmpdcbAAAfbRb.jpg`와 위 캐릭터 참조 그림은 등록 갤러리에도 같은 파일이 있어 **독립 성능 평가에 쓰면 안 된다**. 과거 모델이 낸 이름만으로 정답을 만들지 않았고, 그 밖의 추가 사진은 실제 이미지의 인물·글자·위치를 확인해 기록했다. 확인하지 않은 다른 등장 인물의 신원은 비워 두었다.
 
 `ocr-replay/`는 과거 운영 이미지의 OCR 속도·정확도 비교용 사본이다. `bench.cjs`의 검색어 목록은 검사 입력일 뿐 정답이 아니므로, 각 파일의 실제 표기와 부재 여부를 별도로 `images`에 적었다. 일부는 검색어가 전혀 없는 장면이고 일부는 작은 출연자 명단만 포함한다.
+
+`keyword-absent/あぐり/`에는 おにまい 상품 이미지 세 장과 Raffle_info의 GUILTY GEAR 경품 이미지 한 장을 OCR 전용 음성 회귀 입력으로 둔다. 첫 두 장은 위 `HVIsytPaAAAvC-k.jpg`·`HVIs0Kta8AEx4ZK.jpg`와 같은 바이트의 사본이다. `npm run ocr:samples`가 네 장의 `あぐり` 부재와 그중 실제로 적힌 `アクリル`의 검출을 함께 확인한다. 원본 URL 및 해시 비교는 두 조사 기록에 있다.
 
 `trainingMedia`의 세 경로는 `sample/` 밖의 上原歩夢 갤러리 원본이다. 각각 인형 사진, 굿즈의 데포르메 일러스트, 피규어 사진이라는 매체 차이를 남겼다. 나머지 갤러리 원본까지 이 샘플 파일의 정답으로 간주하지 않는다.
 
@@ -22,5 +24,8 @@ OCR 양성·음성 라벨이 있는 32장을 같은 설정으로 재검사하면
 `HVHrU8Ea0AA6-hf.jpg`와 `HVHrYBSaEAAfF1o.jpg`에는 μ's·Aqours 각 아홉 명의 캐릭터 그림이 있다. 두 번째 진열 사진의 `渡辺曜` 배지는 아래쪽 오른쪽에서 세 번째로, 포장 반사와 흐림이 심하다. `HS9g4HvaUAA8-_w.jpg`·`HVEjx9aagAAZ9i4.jpg`·`HVDaSCVbAAAAj7N.jpg`와 두 おにまい 상품 이미지는 등록 인물·캐릭터·의상 부재 샘플이다. `HVIs0Kta8AEx4ZK.jpg`의 `アクリルカード`를 `あぐり`로 오인했던 OCR은 같은 글자 영역의 일본어 모델 대체 읽기로 기각한다. `HVIsytPaAAAvC-k.jpg`도 `あぐり` 부재 라벨을 둔다. `HVDaSCVbAAAAj7N.jpg`와 `HVEjx9aagAAZ9i4.jpg`의 다른 얼굴은 大西亜玖璃 점수 0.3064·0.4875를 냈지만 이름별 약한 하한 0.49에서 기각된다.
 
 얼굴 약한 후보 회귀에서는 `GPEWXlGacAEbFX_.jpg`·`GxFC_2taEAAGcnS.jpg`·`HEvAW_2bIAIytUw.jpg`·`HFMLrhZasAAVHyV.jpg`에 잘못 붙었던 大西亜玖璃 또는 楡井希実 이름이 없어야 한다. `HG-AYKEbAAAVL5o.jpg`·`HG-Zdh2bIAA21aA.jpg`·`HKchRkqbMAASXom.jpg`에서는 실제 大西亜玖璃의 확정 얼굴을 유지하면서 다른 사람 얼굴에 붙었던 같은 이름의 약한 후보가 없어야 한다. 옆얼굴 `G67t3HDbkAAcOh2.jpg`도 `faceChecks`의 확정 검출 대상으로 유지한다.
+
+`HV3Xb71akAAIqN_.jpg`의 오른쪽 얼굴은 楡井希実 0.5047로, `HWFe9z9awAAOhV_.jpg`의 행사 인물은 大西亜玖璃 0.5226으로 잘못 확정됐었다. 후자는 oricon 게시물 두 건에서 같은 바이트로 분석됐다. 두 사진에는 각각 해당 인물이 없으므로 `absentNames`로 검사한다. 반면 `HWADp7haYAAUJO_.jpg`의 특전 안내에 있는 왼쪽 위 작은 인물 사진은 실제 大西亜玖璃이며 점수 0.5244다. 같은 안내의 큰 원본 `HWADrAhbIAAsd8U.jpg`도 실제 大西亜玖璃다. 두 장은 사용자 확인을 거쳐 `faceChecks`에 넣었다. 이 양성과 음성을 함께 검사해 얼굴 점수만 올리는 수정을 막는다.
+같은 게시물의 나머지 두 이미지 `HWADrgobgAA5E55.jpg`·`HWADsFZaAAAlB2I.jpg`는 실사 얼굴 없이 러브라이브 캐릭터 그림만 있으므로 大西亜玖璃 부재를 기록했다.
 
 `npm run samples:labels`는 이름 참조와 실제 이미지 목록을 검사한다. `npm run samples:labeled -- <파일명>`은 지정한 이미지의 분석 결과를 기록된 얼굴·OCR 정답과 비교한다. 매체와 뒷모습 라벨은 존재 정보이지 현재 모델의 성공 보증이 아니다.

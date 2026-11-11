@@ -32,6 +32,7 @@ import path from "path";
 import nodeCrypto from "crypto";
 import { execFile } from "child_process";
 import { promisify } from "util";
+import { gzip as gzipCallback } from "zlib";
 
 import { ensureModelsDownloaded } from "./model-downloader";
 import { initOCR, parseSearchLists, parseKeywordBlocks, performOCR, KeywordBlock } from "./ocr";
@@ -40,6 +41,7 @@ import { appendAnalysisLog, summarizeAnalysisError } from "./analysis-log";
 import { JobImageCache, TimedImageResultCache } from "./job-image-cache";
 
 const execFileAsync = promisify(execFile);
+const gzip = promisify(gzipCallback);
 
 const MODELS_DIR = path.join(PROJECT_ROOT, "models");
 
@@ -47,6 +49,13 @@ const BROKER_URL = (process.env.OCR_BROKER_URL || "http://localhost:3100").repla
 const BROKER_SECRET: string = require(path.join(PROJECT_ROOT, "scripts/shared-secret.cjs")).readSecret();
 const INTERVAL_MS = Number(process.env.OCR_WORKER_INTERVAL_MS || 60000);
 const WORKER_ID = process.env.OCR_WORKER_ID || `imageanalyzer-${process.pid}`;
+// Broker requests carry JSON rather than media bytes. Bound connection and body reads so a
+// stalled socket cannot hold the single polling loop forever.
+const BROKER_REQUEST_TIMEOUT_MS = 30000;
+const BROKER_RESPONSE_MAX_BYTES = 8 * 1024 * 1024;
+let brokerAcceptsGzip = false;
+const BROKER_IDLE_LOG_INTERVAL_MS = 10 * 60 * 1000;
+const BROKER_IDLE_CONSOLE_INTERVAL_MS = 60 * 1000;
 // Vision work is opt-in; an OCR-only setting always wins over --all.
 const FULL_MODE = process.argv.includes("--all") && !process.argv.includes("--ocr-only") && process.env.IMAGEANALYZER_OCR_ONLY !== "1";
 const ocrResultCache = new TimedImageResultCache<Awaited<ReturnType<typeof performOCR>>>();
@@ -126,8 +135,8 @@ interface Job {
  * 이 형식은 브로커(ocr-broker/server.js)와 확장(ocr-queue-client.js)에도 동일하게 있다.
  * 리포가 다른 별개 배포물이라 코드로 공유할 수 없으니 어긋나면 안 된다.
  */
-function sha256Hex(text: string): string {
-  return nodeCrypto.createHash("sha256").update(text, "utf8").digest("hex");
+function sha256Hex(text: string | Buffer): string {
+  return nodeCrypto.createHash("sha256").update(text).digest("hex");
 }
 
 function hmacHex(payload: string): string {
@@ -137,34 +146,87 @@ function hmacHex(payload: string): string {
 /** 브로커가 돌려준 HTTP status를 실은 에러. 호출자가 409를 메시지 파싱 없이 구분한다. */
 type BrokerError = Error & { status?: number };
 
+async function readBrokerBody(response: Response): Promise<Buffer> {
+  const reader = response.body?.getReader();
+  if (!reader) return Buffer.alloc(0);
+  const chunks: Buffer[] = [];
+  let size = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) return Buffer.concat(chunks, size);
+      size += value.byteLength;
+      if (size > BROKER_RESPONSE_MAX_BYTES) {
+        await reader.cancel();
+        throw new Error("broker response too large (> 8 MiB decoded)");
+      }
+      chunks.push(Buffer.from(value.buffer, value.byteOffset, value.byteLength));
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 async function brokerFetch(pathname: string, init: RequestInit = {}): Promise<any> {
   const method = (init.method || "GET").toUpperCase();
   const bodyText = typeof init.body === "string" ? init.body : "";
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  let body = Buffer.from(bodyText, "utf8");
+  const headers: Record<string, string> = { "Content-Type": "application/json", "Accept-Encoding": "gzip" };
+  if (brokerAcceptsGzip && body.length >= 1024) {
+    const compressed = await gzip(body, { level: 1 });
+    if (body.length - compressed.length >= Math.max(64, Math.ceil(body.length * 0.05))) {
+      body = compressed;
+      headers["Content-Encoding"] = "gzip";
+    }
+  }
 
   let nonce = "";
   if (BROKER_SECRET) {
     const ts = String(Date.now());
     nonce = nodeCrypto.randomBytes(12).toString("hex");
-    const payload = [method, pathname, ts, nonce, sha256Hex(bodyText)].join("\n");
+    const payload = [method, pathname, ts, nonce, sha256Hex(body)].join("\n");
     headers["Authorization"] = `OCR1 ts=${ts},nonce=${nonce},sig=${hmacHex(payload)}`;
   }
 
-  const response = await fetch(`${BROKER_URL}${pathname}`, {
-    ...init,
-    headers: { ...headers, ...(init.headers as Record<string, string> | undefined) },
-  });
-
-  // 텍스트로 읽어 받은 바이트 그대로 서명을 검증한다.
-  const text = await response.text();
-
-  // /health는 설계상 서명이 없다 (handshake이며 그것으로 아무것도 신뢰하지 않는다).
-  if (BROKER_SECRET && nonce && pathname !== "/health") {
-    if (response.headers.get("x-ocr-signature") !== hmacHex(`${nonce}\n${sha256Hex(text)}`)) {
-      throw new Error("response signature mismatch (브로커가 보낸 응답이 아니다)");
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), BROKER_REQUEST_TIMEOUT_MS);
+  let response: Response;
+  let responseBody: Buffer;
+  try {
+    response = await fetch(`${BROKER_URL}${pathname}`, {
+      ...init,
+      body: init.body === undefined || init.body === null ? undefined : body,
+      headers: { ...headers, ...(init.headers as Record<string, string> | undefined) },
+      signal: controller.signal,
+      redirect: "error",
+    });
+    // 응답 헤더만 도착하고 본문이 멈춘 경우에도 다음 폴링으로 넘어가야 한다.
+    responseBody = await readBrokerBody(response);
+  } catch (e) {
+    if (controller.signal.aborted) {
+      const timeoutError = new Error(`broker request timeout after ${BROKER_REQUEST_TIMEOUT_MS}ms - path: ${pathname}`) as Error & { cause?: unknown };
+      timeoutError.cause = e;
+      throw timeoutError;
     }
+    throw e;
+  } finally {
+    clearTimeout(timer);
   }
 
+  // Fetch decodes HTTP gzip before exposing the body. Verify those original JSON
+  // bytes; request signatures instead cover the bytes uploaded on the wire.
+  // /health는 설계상 서명이 없다 (handshake이며 그것으로 아무것도 신뢰하지 않는다).
+  if (BROKER_SECRET && nonce && pathname !== "/health") {
+    const responseSignature = response.headers.get("x-ocr-signature");
+    if (responseSignature !== hmacHex(`${nonce}\n${sha256Hex(responseBody)}`)) {
+      // An unsigned gateway error and a signed response with the wrong key need different
+      // diagnoses. Do not trust the unverified body or treat its HTTP status as a BrokerError.
+      throw new Error(`response signature mismatch - path: ${pathname}, httpStatus: ${response.status}, signature: ${responseSignature ? "present" : "missing"}, bodyBytes: ${responseBody.length}`);
+    }
+    brokerAcceptsGzip = (response.headers.get("accept-encoding") || "").split(",").some(value => value.trim().toLowerCase() === "gzip");
+  }
+
+  const text = responseBody.toString("utf8");
   if (!response.ok) {
     const err = new Error(`HTTP ${response.status}${text ? ` ${text.slice(0, 200)}` : ""}`) as BrokerError;
     err.status = response.status;
@@ -189,7 +251,7 @@ async function verifyBroker(): Promise<void> {
   try {
     health = await brokerFetch("/health");
   } catch (e: any) {
-    console.warn(`Broker not reachable yet - broker: ${BROKER_URL}, error: ${e.message} (계속 폴링한다. 브로커가 아직 안 떴거나 방화벽이 막고 있을 수 있다)`);
+    console.warn(`Broker not reachable yet - broker: ${BROKER_URL}, error: ${summarizeAnalysisError(e)} (계속 폴링한다. 브로커가 아직 안 떴거나 방화벽이 막고 있을 수 있다)`);
     return;
   }
 
@@ -210,6 +272,59 @@ async function claimJob(): Promise<Job | null> {
   });
   const jobs: Job[] = Array.isArray(data?.jobs) ? data.jobs : [];
   return jobs[0] || null;
+}
+
+// Empty claims have no job rows, so keep a sparse file heartbeat to distinguish an idle
+// worker from a worker whose broker request is stuck. Failures and recovery are logged at
+// the transition; repeated failures get one reminder per heartbeat interval.
+let brokerPollState: "unknown" | "connected" | "failed" = "unknown";
+let brokerFailureStartedAt = 0;
+let brokerConsecutiveFailures = 0;
+let lastBrokerPollLogAt = 0;
+let lastBrokerIdleConsoleAt = 0;
+
+function writeBrokerPollLog(status: string, details: Record<string, unknown>): void {
+  try {
+    appendAnalysisLog({ event: "broker_poll", mode: "worker", workerId: WORKER_ID,
+      broker: BROKER_URL, status, ...details });
+  } catch (e) {
+    // Telemetry failure must not stop claims or extend an outage.
+    console.error(`Broker poll audit failed - error: ${summarizeAnalysisError(e)}`);
+  }
+}
+
+function recordBrokerClaimSuccess(job: Job | null): void {
+  const now = Date.now();
+  const recovered = brokerPollState === "failed";
+  if (recovered || brokerPollState === "unknown" || (!job && now - lastBrokerPollLogAt >= BROKER_IDLE_LOG_INTERVAL_MS)) {
+    writeBrokerPollLog(recovered ? "recovered" : job ? "connected" : "idle", {
+      claimedJob: Boolean(job),
+      ...(recovered ? { outageMs: now - brokerFailureStartedAt, consecutiveFailures: brokerConsecutiveFailures } : {}),
+    });
+    lastBrokerPollLogAt = now;
+    if (recovered) console.log(`Broker reconnected - time: ${new Date(now).toISOString()}, broker: ${BROKER_URL}, outageMs: ${now - brokerFailureStartedAt}, failures: ${brokerConsecutiveFailures}, claimedJob: ${Boolean(job)}`);
+  }
+  if (!job && !recovered && (brokerPollState === "unknown" || now - lastBrokerIdleConsoleAt >= BROKER_IDLE_CONSOLE_INTERVAL_MS)) {
+    console.log(`Broker idle - time: ${new Date(now).toISOString()}, workerId: ${WORKER_ID}, broker: ${BROKER_URL}`);
+    lastBrokerIdleConsoleAt = now;
+  } else if (recovered && !job) {
+    lastBrokerIdleConsoleAt = now;
+  }
+  brokerPollState = "connected";
+  brokerFailureStartedAt = 0;
+  brokerConsecutiveFailures = 0;
+}
+
+function recordBrokerClaimFailure(error: unknown): void {
+  const now = Date.now();
+  if (brokerPollState !== "failed") brokerFailureStartedAt = now;
+  brokerConsecutiveFailures++;
+  if (brokerPollState !== "failed" || now - lastBrokerPollLogAt >= BROKER_IDLE_LOG_INTERVAL_MS) {
+    writeBrokerPollLog("failed", { outageMs: now - brokerFailureStartedAt,
+      consecutiveFailures: brokerConsecutiveFailures, error: summarizeAnalysisError(error) });
+    lastBrokerPollLogAt = now;
+  }
+  brokerPollState = "failed";
 }
 
 async function fetchImageOnce(url: string): Promise<Buffer> {
@@ -436,12 +551,16 @@ async function tick(): Promise<void> {
     job = await claimJob();
   } catch (e: any) {
     // 브로커가 꺼져 있거나 네트워크가 끊긴 상태. 다음 폴링에서 자연히 복구된다.
-    console.warn(`Claim failed - broker: ${BROKER_URL}, error: ${e.message}`);
+    recordBrokerClaimFailure(e);
+    console.warn(`Claim failed - broker: ${BROKER_URL}, error: ${summarizeAnalysisError(e)}`);
     return;
   }
 
-  // 큐가 빈 것은 정상이므로 아무것도 찍지 않는다(1분마다 도는 루프다).
+  recordBrokerClaimSuccess(job);
+
+  // 큐가 비면 한 번만 상태를 내고, 이후 콘솔과 파일에 각각 드문 heartbeat를 남긴다.
   while (job) {
+    console.log(`Job started - time: ${new Date().toISOString()}, workerId: ${WORKER_ID}, jobId: ${job.jobId}, kind: ${job.kind || "ocr"}, images: ${job.imageUrls.length}, postUrl: ${job.postUrl}`);
     const startedAt = Date.now();
     const attemptId = nodeCrypto.randomUUID();
     let payload: { found: string[]; regions: number; error: string | null };
@@ -492,8 +611,9 @@ async function tick(): Promise<void> {
         console.log(`Job already answered by another worker - jobId: ${job.jobId}, ms: ${elapsedMs}`);
       } else {
         // 그 외에는 job이 브로커에 그대로 남는다. 재시도가 곧 그 job의 재실행이다.
-        appendAnalysisLog({ event: "job_delivery", mode: "worker", workerId: WORKER_ID, attemptId, jobId: job.jobId, status: "upload_failed", error: e.message });
-        console.error(`Result upload failed - jobId: ${job.jobId}, error: ${e.message}`);
+        const error = summarizeAnalysisError(e);
+        appendAnalysisLog({ event: "job_delivery", mode: "worker", workerId: WORKER_ID, attemptId, jobId: job.jobId, status: "upload_failed", error });
+        console.error(`Result upload failed - jobId: ${job.jobId}, error: ${error}`);
         return;
       }
     }
@@ -504,9 +624,11 @@ async function tick(): Promise<void> {
     try {
       job = await claimJob();
     } catch (e: any) {
-      console.warn(`Claim failed - broker: ${BROKER_URL}, error: ${e.message}`);
+      recordBrokerClaimFailure(e);
+      console.warn(`Claim failed - broker: ${BROKER_URL}, error: ${summarizeAnalysisError(e)}`);
       return;
     }
+    recordBrokerClaimSuccess(job);
   }
 }
 
@@ -611,6 +733,8 @@ async function main() {
     const { loadModels } = await import("./inference");
     initDB(path.join(PROJECT_ROOT, "db"));
     await loadModels(MODELS_DIR);
+    const { assertFaceVerifierReady } = await import("./analyze");
+    assertFaceVerifierReady();
   }
   await initOCR(MODELS_DIR);
   console.log(`Worker ready - kinds: ${FULL_MODE ? "ocr,image" : "ocr"}`);

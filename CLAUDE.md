@@ -10,12 +10,12 @@ current reference set.
 ## Tech Stack
 - **Server**: Node.js + TypeScript (Express, onnxruntime-node, sharp, better-sqlite3). No Python.
 - **OCR**: PaddleOCR DBNet detection + multilingual PP-OCRv5 mobile (`v5`), Japanese (`ja`), and Korean (`ko`) CTC recognition, ONNX
-- **Vision**: InsightFace SCRFD + ArcFace (real faces), deepghs YOLOv8 detectors + CCIP (anime),
+- **Vision**: InsightFace SCRFD + ArcFace R50 / GlintR100 (real faces), deepghs YOLOv8 detectors + CCIP (anime),
   SmilingWolf WD-Tagger v3 (character names + clothing tags)
 
 ## Key Commands
 ```bash
-setup.bat                            # First run: deps, dirs, ONNX download (~815 MiB). ./setup.sh on POSIX
+setup.bat                            # First run: deps, dirs, ONNX download (~1.04 GiB). ./setup.sh on POSIX
 npm run server                       # Start analysis server (port 3000)
 server.bat                           # Windows full-analysis broker worker
 server_local.bat                     # Full worker against the local broker
@@ -41,12 +41,13 @@ takes `--promote <kind> <name>` and `--clear [kind] [name]`, where kind is `face
   A caller whose keywords change (the Chrome extension) must send them, otherwise "not in the
   list" and "in the list but unreadable" are indistinguishable in the answer.
 - **OCR-only mode** (`--ocr-only` / `IMAGEANALYZER_OCR_ONLY=1`) skips downloading and loading
-  the six vision models. Detectors are null-safe, so `analyzeImage` still runs and simply
+  the seven vision models. Detectors are null-safe, so `analyzeImage` still runs and simply
   returns empty faces/facesWeak/characters/charactersWeak/costumes.
 - **Worker mode** (`npm run worker`) reverses the direction: instead of serving HTTP it polls
   a broker for jobs. The Chrome extension runs on a public host and this runs behind NAT, so
-  the extension cannot call in. OCR only, and the gallery DB is never opened. Jobs carry image
-  URLs, not bytes, and the worker downloads them over its own connection.
+  the extension cannot call in. Default worker mode is OCR only and does not open the gallery DB;
+  `server.bat` starts full image analysis with `--all`. Jobs carry image URLs, not bytes, and the
+  worker downloads them over its own connection.
 - **OCR is keyword spotting, not reading.** Search strings are scored directly against the CTC
   probability lattice; there is no full-text assembly and no substring comparison. Per-position
   alternative character sets absorb kana/width/case variation and OCR confusions.
@@ -57,8 +58,10 @@ takes `--promote <kind> <name>` and `--clear [kind] [name]`, where kind is `face
   stronger one-character rival is observed in the same strip. No language detection on the image.
 - **CLIP is not used.** Its space clusters by art style, not identity.
 - Real faces require 5-point landmark alignment before ArcFace; unaligned crops are out of distribution.
-- **Faces are reported in two bands.** `faces` clears the `face` threshold and is treated as a live
-  subject; `facesWeak` falls between `faceWeak` and `face`, including photos-of-photos and
+- Borderline ArcFace face matches require the independent GlintR100 model to rank the same registered
+  person first. Both models use approved face photos; no per-error gallery of wrong faces is maintained.
+- **Faces are reported in two bands.** `faces` clears the `face` threshold and confirms identity,
+  including some printed faces; `facesWeak` falls between `faceWeak` and `face`, including photos-of-photos and
   unusual poses. Never auto-decide on `facesWeak`.
 - **Characters are reported only when already registered.** CCIP is the identity axis and matches from
   a single reference image. WD-Tagger is an auxiliary signal whose fixed vocabulary does not cover
@@ -77,13 +80,13 @@ takes `--promote <kind> <name>` and `--clear [kind] [name]`, where kind is `face
 - `config.json`: thresholds, margins, OCR settings, character name aliases, candidate collection limits
 - `searchStrings.tsv`: one list per line; tab-separated parts are AND, lines are OR
 - `server/src/ocr.ts`: detection, strip building, batched recognition, CTC keyword scoring
-- `server/src/inference.ts`: all ONNX inference (SCRFD, ArcFace, anime detectors, CCIP, WD-Tagger)
+- `server/src/inference.ts`: all ONNX inference (SCRFD, ArcFace R50 / GlintR100, anime detectors, CCIP, WD-Tagger)
 - `server/src/analyze.ts`: orchestration shared by the server and the CLI
 - `server/src/matching.ts`: identity centroid/max scoring or per-outfit max scoring with margin rejection
 - `server/src/candidates.ts`: candidate crop collection, dedup, and per-name caps
 - `server/src/db.ts`: SQLite; `embeddings` is the approved gallery and `candidates` is the pending
   review queue; `kind` × `space` keeps embedding spaces from being compared
-- `server/src/model-downloader.ts`: HuggingFace redirect handling
+- `server/src/model-downloader.ts`: HuggingFace redirect handling and GlintR100 checksum verification
 - `server/src/index.ts`: HTTP layer only
 - `server/src/worker.ts`: broker-polling mode for running behind NAT
 - `server/src/config.ts`: config.json loader shared by the server, the CLI and the worker

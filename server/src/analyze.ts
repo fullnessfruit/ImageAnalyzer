@@ -5,7 +5,7 @@
 import path from "path";
 import { getGallery, l2normalize, Kind } from "./db";
 import { performOCR, SearchList, OcrResult } from "./ocr";
-import { matchGallery } from "./matching";
+import { matchGallery, scoreEntry } from "./matching";
 import { collectCandidate, CandidateConfig } from "./candidates";
 
 /** 후보 크롭이 쌓이는 곳. server/src 와 server/dist 어느 쪽에서 실행해도 프로젝트 루트를 가리킨다. */
@@ -18,6 +18,7 @@ import {
   detectionsInside,
   alignFace,
   extractFaceEmbedding,
+  extractFaceVerifierEmbedding,
   faceQualityOk,
   MIN_FACE_SIZE,
   extractCcipEmbedding,
@@ -26,6 +27,7 @@ import {
   cropRegion,
   cropWithMask,
   hasArcFace,
+  hasFaceVerifier,
   hasCcip,
   hasWdTagger,
   Box,
@@ -42,6 +44,9 @@ export interface Config {
     faceWeak: number;
     faceWeakByName: Record<string, number>;
     facePose: number;
+    faceVerify: number;
+    faceVerifyPose: number;
+    faceVerifyBelow: number;
     character: number;
     costume: number;
   };
@@ -62,9 +67,10 @@ export interface Config {
 
 /**
  * 임계값은 모델마다 코사인 분포가 달라 서로 비교 불가능한 스케일 위에 있다.
- * 확인된 본인 얼굴 최저는 0.514, 다른 인물의 최고는 0.4875이므로 0.5를
- * 확정 경계로 둔다. 기본 약한 하한은 0.28이지만 오검출이 확인된 두 이름은
- * 이름별로 높인다. 사진 속 실제 본인 얼굴의 약한 점수 분포는 아직 검증되지 않았다.
+ * 실제 얼굴과 다른 인물의 ArcFace 점수가 겹치므로 0.5만으로는 확정할 수 없다.
+ * 기본 약한 하한은 0.28이지만 오검출이 확인된 두 이름은 이름별로 높인다.
+ * 점수가 겹치는 확정 후보는 독립 모델이 승인된 같은 사람의 사진도 지지해야 한다.
+ * 사진 속 실제 본인 얼굴의 약한 점수 분포는 아직 검증되지 않았다.
  * ArcFace에서 0.8 같은 값은 동일 인물조차 전부 기각한다.
  */
 export const DEFAULT_CONFIG: Config = {
@@ -73,6 +79,9 @@ export const DEFAULT_CONFIG: Config = {
     faceWeak: 0.28,
     faceWeakByName: { "大西亜玖璃": 0.49, "楡井希実": 0.32 },
     facePose: 0.5,
+    faceVerify: 0.575,
+    faceVerifyPose: 0.52,
+    faceVerifyBelow: 0.6,
     character: 0.85,
     costume: 0.52,
   },
@@ -108,6 +117,18 @@ export interface AnalyzeResult {
   _elapsedMs: number;
 }
 
+/** 승인된 얼굴마다 두 모델의 참조가 있어야 같은 이름을 독립적으로 확인할 수 있다. */
+export function assertFaceVerifierReady(): void {
+  const primary = getGallery("face", "arcface");
+  if (primary.length === 0) return;
+  if (!hasArcFace()) throw new Error("Primary face models missing; run setup and restart the full worker/server");
+  if (!hasFaceVerifier()) throw new Error("Face verifier model missing; run setup and restart the full worker/server");
+  const verifier = new Map(getGallery("face-verifier", "glintr100").map((entry) => [entry.name, entry.vectors.length]));
+  if (primary.some((entry) => verifier.get(entry.name) !== entry.vectors.length)) {
+    throw new Error("Face verifier gallery incomplete; run npm run register:faces before starting the full worker/server");
+  }
+}
+
 /**
  * 실사 인물. ArcFace는 5점 유사변환으로 정규 템플릿에 워프된 얼굴로만 학습되었으므로
  * 랜드마크가 없으면 임베딩이 분포 밖이 된다 - 등록하지도 질의하지도 않는다.
@@ -122,6 +143,9 @@ async function recognizeFaces(
   if (!hasArcFace() || faces.length === 0) return empty;
   const gallery = getGallery("face", "arcface");
   if (gallery.length === 0) return empty;
+  assertFaceVerifierReady();
+  const verifierGallery = getGallery("face-verifier", "glintr100");
+  const verifier = new Map(verifierGallery.map((entry) => [entry.name, entry] as const));
 
   const raw = await loadRaw(imageBuffer);
   const strong: Match[] = [];
@@ -138,7 +162,8 @@ async function recognizeFaces(
     if (!det.landmarks || det.box[2] < MIN_FACE_SIZE || det.box[3] < MIN_FACE_SIZE) continue;
     const extremePose = !faceQualityOk(det);
 
-    const embedding = await extractFaceEmbedding(alignFace(raw, det.landmarks));
+    const aligned = alignFace(raw, det.landmarks);
+    const embedding = await extractFaceEmbedding(aligned);
     if (!embedding) continue;
 
     // 측면·하향 얼굴은 5점 정합이 불안정하므로 더 높은 점수와 큰 신원 간격을 요구한다.
@@ -151,6 +176,21 @@ async function recognizeFaces(
       extremePose ? "face-pose" : "face",
     );
     if (!best || (names && !names.has(best.name))) continue;
+
+    // R50의 경계 점수는 실제 작은 굿즈 얼굴과 다른 사람의 얼굴이 겹친다.
+    // 이 구간의 확정 후보만 독립 학습된 모델로 확인해 운영 중 새 반례 등록을 요구하지 않는다.
+    if (best.score < cfg.similarityThreshold.faceVerifyBelow &&
+        (extremePose || best.score >= cfg.similarityThreshold.face)) {
+      const secondEmbedding = await extractFaceVerifierEmbedding(aligned);
+      if (!secondEmbedding) throw new Error("Face verifier model unavailable");
+      const secondScore = scoreEntry(secondEmbedding, verifier.get(best.name)!, "hybrid");
+      const threshold = extremePose ? cfg.similarityThreshold.faceVerifyPose : cfg.similarityThreshold.faceVerify;
+      const secondBest = matchGallery(secondEmbedding, verifierGallery, threshold, 0);
+      if (!secondBest || secondBest.name !== best.name) {
+        console.log(`[face-verifier] REJECT - name: ${best.name}, faceScore: ${best.score.toFixed(4)}, verifierScore: ${secondScore.toFixed(4)}, verifierBest: ${secondBest?.name ?? "none"}, threshold: ${threshold}`);
+        continue;
+      }
+    }
 
     const match: Match = {
       name: best.name,

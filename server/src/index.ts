@@ -15,7 +15,7 @@
  * searchStrings.tsv로 물러선다 (CLI·수동 테스트용).
  *
  * `--ocr-only`(또는 IMAGEANALYZER_OCR_ONLY=1)로 기동하면 OCR만 활성화한다. 비전 모델
- * 6개(약 772MB)를 받지도 로드하지도 않으므로 메모리가 작은 호스트에서 돌릴 수 있다.
+ * 7개(약 1GiB)를 받지도 로드하지도 않으므로 메모리가 작은 호스트에서 돌릴 수 있다.
  * 이때 faces/facesWeak/characters/charactersWeak/costumes는 항상 빈 배열이다.
  */
 
@@ -28,8 +28,8 @@ import nodeCrypto from "crypto";
 import { initDB, countEmbeddings } from "./db";
 import { ensureModelsDownloaded } from "./model-downloader";
 import { initOCR, parseSearchLists, isOcrReady } from "./ocr";
-import { loadModels, hasArcFace, hasCcip, hasWdTagger } from "./inference";
-import { analyzeImage } from "./analyze";
+import { loadModels, hasArcFace, hasFaceVerifier, hasCcip, hasWdTagger } from "./inference";
+import { analyzeImage, assertFaceVerifierReady } from "./analyze";
 import { loadConfig, PROJECT_ROOT } from "./config";
 import { appendAnalysisLog } from "./analysis-log";
 
@@ -57,11 +57,12 @@ async function main() {
   // 비전 세션을 만들지 않는다. 탐지기는 세션이 없으면 빈 배열을 돌려주도록 되어 있어
   // analyzeImage는 그대로 통과하고 비전 결과 배열만 비게 된다.
   if (!OCR_ONLY) await loadModels(MODELS_DIR);
+  if (!OCR_ONLY) assertFaceVerifierReady();
   await initOCR(MODELS_DIR);
 
   if (!OCR_ONLY) {
     console.log(
-      `Gallery - face: ${countEmbeddings("face")}, character: ${countEmbeddings("character")}, costume: ${countEmbeddings("costume")}`,
+      `Gallery - face: ${countEmbeddings("face")}, faceVerifier: ${countEmbeddings("face-verifier")}, character: ${countEmbeddings("character")}, costume: ${countEmbeddings("costume")}`,
     );
   }
 
@@ -127,10 +128,12 @@ async function main() {
       ocrOnly: OCR_ONLY,
       ocr: isOcrReady(),
       arcface: hasArcFace(),
+      faceVerifier: hasFaceVerifier(),
       ccip: hasCcip(),
       wdTagger: hasWdTagger(),
       gallery: {
         face: countEmbeddings("face"),
+        faceVerifier: countEmbeddings("face-verifier"),
         character: countEmbeddings("character"),
         costume: countEmbeddings("costume"),
       },

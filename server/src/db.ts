@@ -10,10 +10,10 @@ import Database from "better-sqlite3";
 import path from "path";
 import fs from "fs";
 
-/** 인식 과제. */
-export type Kind = "face" | "character" | "costume";
+/** face-verifier는 승인된 얼굴 사진의 독립 모델 벡터이며 별도 판정 대상은 아니다. */
+export type Kind = "face" | "face-verifier" | "character" | "costume";
 /** 임베딩을 만든 모델. 같은 space끼리만 비교 가능하다. */
-export type Space = "arcface" | "ccip" | "wdtag";
+export type Space = "arcface" | "glintr100" | "ccip" | "wdtag";
 
 let db: Database.Database;
 
