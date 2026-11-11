@@ -28,7 +28,7 @@ lands far away while different characters with similar attributes land close.
 
 | Task | Model | Registration needed |
 |---|---|---|
-| Real-person face | SCRFD landmarks → 5-point similarity warp → ArcFace w600k_r50 (flip TTA) | 1–3 photos per person |
+| Real-person face | SCRFD landmarks → 5-point similarity warp → ArcFace w600k_r50 (flip TTA); GlintR100 confirms borderline hits | 1–3 photos per person |
 | Anime character | CCIP (gallery), WD-Tagger v3 review fallback | 1–2 images per character |
 | Anime costume | WD-Tagger clothing tags, IDF-weighted, head masked | 1 image per costume |
 
@@ -66,7 +66,7 @@ ImageAnalyzer/
 └── searchStrings.tsv                # OCR search lists
 ```
 
-Folder name = the name reported by the analyzer. Faces do not need cropping - detection handles it.
+Folder name = the name reported by the analyzer. Face references do not need cropping. `register:faces` automatically encodes each approved photo with both face models; it does not need examples of people who were previously matched incorrectly.
 
 ## Quick start
 
@@ -79,8 +79,9 @@ npm run server           # manual HTTP API; the extension uses the broker worker
 After upgrading Node.js on an existing machine, run `npm ci` in this directory before starting
 the server or workers so the native SQLite, ONNX and image-processing packages match the new runtime.
 
-Models (~815 MiB) download automatically on first run.
+Models (~1.04 GiB) download automatically on first run.
 `server.bat` starts the full broker worker (OCR, faces, characters and costumes); `server_local.bat` selects the local broker at 127.0.0.1:3100. Use `server-ocr.bat` / `server-ocr_local.bat` for OCR only. All workers use the same broker and `OCR_BROKER_SECRET` as VoiceAnalyzer, and open no incoming port. The extension sends its shared target-name list; names exactly match registered data folders. Run the existing registration commands after adding reference images. The manual HTTP API remains available via `npm run server`.
+Run `server_status.bat` to open a separate live status window for the already running worker. It reads the latest local audit log every 10 seconds and shows the worker PID, process state, last action and its age without restarting or claiming jobs. `npm run worker:status` does the same from a terminal.
 If a target name exists in both a character and costume gallery, plain `上原歩夢` requires an identity hit for `found`; costume hits still appear in typed `matches`. Add `costume:上原歩夢` to the extension's media-analysis names to request the outfit independently. The worker returns that exact target string in `found` for a costume hit. `character:<name>` and `face:<name>` select one gallery kind explicitly. Costume matches require both a gallery similarity score and evidence of a distinctive clothing tag from a reference image; this rejects the similar but different outfits in the labeled samples while retaining the tested school-uniform matches.
 
 ### Labeled OCR samples
@@ -98,8 +99,8 @@ subjects are in `sample/labels.json`; run `npm run samples:labels` to validate t
 npm run server:ocr
 ```
 
-Runs the server with the vision models (face / arcface / anime detectors / ccip / wd-tagger,
-~772 MiB) neither downloaded nor loaded - only the OCR models (~43 MiB) are used. `faces`,
+Runs the server with the seven vision models (face detector, two face recognizers, anime detectors, CCIP, WD-Tagger,
+~1 GiB) neither downloaded nor loaded - only the OCR models (~43 MiB) are used. `faces`,
 `facesWeak`, `characters`, `charactersWeak` and `costumes` always come back empty; `ocr` is unaffected. Use it
 when the caller only asks "does this image contain one of these strings?" or when the host is
 too small for the full model set. `IMAGEANALYZER_OCR_ONLY=1` does the same, and `GET /health`
@@ -138,6 +139,10 @@ and analysis inputs. A repeat job with the same search list or requested names a
 result without downloading the image. Changed OCR settings or a changed gallery bypass the old entry.
 Cache hits still write request and result log lines with `status: "cached"`; restarting the worker clears
 the cache.
+Workers also write `broker_poll` lines for the first claim, connection failures, recovery, and every
+10 minutes while the queue stays empty. Broker requests time out after 30 seconds, then the worker
+tries again at its next polling interval without a retry limit. A newly started worker prints one
+console line when each job starts and ends, and an idle status line about once per minute.
 The log files are ignored by Git and are not deleted automatically. For example, search them with
 `rg '"imageUrl":"https://pbs.twimg.com/' log/`.
 
@@ -182,7 +187,7 @@ The response below illustrates the fields; the scores and names are placeholders
 
 ```json
 {
-  "similarityThreshold": { "face": 0.5, "faceWeak": 0.28, "faceWeakByName": { "大西亜玖璃": 0.49, "楡井希実": 0.32 }, "facePose": 0.5, "character": 0.85, "costume": 0.52 },
+  "similarityThreshold": { "face": 0.5, "faceWeak": 0.28, "faceWeakByName": { "大西亜玖璃": 0.49, "楡井希実": 0.32 }, "facePose": 0.5, "faceVerify": 0.575, "faceVerifyPose": 0.52, "faceVerifyBelow": 0.6, "character": 0.85, "costume": 0.52 },
   "margin":              { "face": 0.06, "facePose": 0.3, "character": 0.04, "costume": 0.05 },
   "ocr":                 { "scoreThreshold": 0.5, "detScales": [960, 1600] },
   "wdTagger":            { "characterTagThreshold": 0.6 },
@@ -196,14 +201,22 @@ like 0.8, reasonable for CCIP, rejects every genuine ArcFace match.
 
 Faces are reported in two bands so that lower-scoring captures can be reviewed without being accepted
 as confirmed identities. `faceWeakByName` overrides the weak reporting floor for known identities;
-other names use `faceWeak`. The current labeled images had ten wrong-name weak candidates and no
-confirmed weak positive, so photographed-photo recall still needs a verified positive sample.
+other names use `faceWeak`. An ArcFace hit from `face` (0.5) up to `faceVerifyBelow` (0.6) must also
+score at least `faceVerify` (0.575) against the approved photos encoded by GlintR100, and that
+model must also rank the same person first among registered names.
+For extreme poses, the second threshold is `faceVerifyPose` (0.52), alongside the stricter primary
+margin. Only borderline accepted hits run the second model. This separates the observed wrong face
+(ArcFace 0.5226, GlintR100 0.5583) from a verified small face on merchandise (0.5244, 0.5919)
+without maintaining a gallery of wrong faces. Run `npm run register:faces` once after updating an
+existing installation so the second model has references. If its model or references are missing,
+full-analysis startup fails with a registration instruction instead of silently omitting this check.
+The `facesWeak` band remains for human review and has no verified genuine sample in the current labels.
 
 | Band | Range | Meaning |
 |---|---|---|
-| `faces` | ≥ `face` (0.5) | accepted as the real subject |
+| `faces` | ≥ `face` (0.5), with independent confirmation when below 0.6 | registered face identity; live and printed faces are not distinguished |
 | `facesWeak` | per-name weak floor … `face` | uncertain capture or pose - do not act on automatically |
-| - | < per-name weak floor (or default 0.28) | not reported |
+| - | < per-name weak floor (or default 0.28), or failed independent confirmation | not reported |
 
 A match must clear both the absolute threshold and the **top-1 minus top-2 margin**. If top-1 and
 top-2 are close, the match is meaningless regardless of its absolute score, and reporting "unknown"
@@ -269,7 +282,7 @@ Delete `db/embeddings.db` and re-run `npm run register:all`.
 
 ## Moving the local gallery to another computer
 
-Git tracks the code, `config.json`, `searchStrings.tsv`, and the sample label documents, but ignores the actual gallery and sample images. Copy `data/` for approved face/character/costume references and pending candidate crops, `db/` for the current registered embeddings and candidate records, and `sample/` if the labeled regression images should be available on the new computer. Stop the server and workers before copying the SQLite database. Copy `models/` if the new computer must run offline or preserve local experiments; otherwise the runtime models are downloaded again. Copy `log/` only if the previous machine's analysis history is needed. When bringing only `data/`, run `npm run register:all` to rebuild approved embeddings, but the separate candidate database records will not be reconstructed from crop files. The broker shared secret is stored outside this repository and must be configured separately on the new machine.
+Git tracks the code, `config.json`, `searchStrings.tsv`, and the sample label documents, but ignores the actual gallery and sample images. Copy `data/` for approved face/character/costume references and pending candidate crops; copy `db/` for the current registered embeddings and candidate records; and copy `sample/` if the labeled regression images should be available on the new computer. Stop the server and workers before copying the SQLite database. Copy `models/` if the new computer must run offline or preserve local experiments; otherwise the runtime models are downloaded again. Copy `log/` only if the previous machine's analysis history is needed. When bringing only `data/`, run `npm run register:all` to rebuild approved embeddings for both face models and the other tasks, but the separate candidate database records will not be reconstructed from crop files. The broker shared secret is stored outside this repository and must be configured separately on the new machine.
 
 ## Named image jobs
 

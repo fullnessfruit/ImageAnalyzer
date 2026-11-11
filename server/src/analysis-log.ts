@@ -5,7 +5,7 @@ import path from "path";
 import { PROJECT_ROOT } from "./config";
 
 export type AnalysisLogEntry = Record<string, unknown> & {
-  event: "image_request" | "image_result" | "job_result" | "job_delivery" | "job_error";
+  event: "image_request" | "image_result" | "job_result" | "job_delivery" | "job_error" | "broker_poll";
   mode: "worker" | "http" | "cli";
 };
 

@@ -4,7 +4,7 @@
  * 세션은 모듈 레벨 싱글톤으로 시작 시 한 번만 로딩한다.
  *
  * 모델별 역할:
- *  - face-det (SCRFD det_10g) + arcface  : 실사 인물. 랜드마크 정합이 필수다.
+ *  - face-det + arcface + face-verifier  : 실사 얼굴. 두 인식 모델은 같은 5점 정합을 쓴다.
  *  - anime-face-det / anime-person-det   : 애니 영역 검출 (YOLOv8, 학습 불필요)
  *  - ccip                                : 캐릭터 신원. 화풍이 달라도 같은 캐릭터를 모은다.
  *  - wd-tagger                           : 캐릭터 이름(제로샷) + 의류 태그(의상 표현)
@@ -17,6 +17,7 @@ import path from "path";
 import { getModelPath, ModelName } from "./model-downloader";
 
 let arcfaceSession: ort.InferenceSession | null = null;
+let faceVerifierSession: ort.InferenceSession | null = null;
 let faceDetSession: ort.InferenceSession | null = null;
 let animeFaceDetSession: ort.InferenceSession | null = null;
 let animePersonDetSession: ort.InferenceSession | null = null;
@@ -62,6 +63,7 @@ async function tryLoad(modelsDir: string, name: ModelName, label: string): Promi
 export async function loadModels(modelsDir: string): Promise<void> {
   faceDetSession = await tryLoad(modelsDir, "face-det", "face-det(SCRFD)");
   arcfaceSession = await tryLoad(modelsDir, "arcface", "arcface");
+  faceVerifierSession = await tryLoad(modelsDir, "face-verifier", "face-verifier(glintr100)");
   animeFaceDetSession = await tryLoad(modelsDir, "anime-face-det", "anime-face-det");
   animePersonDetSession = await tryLoad(modelsDir, "anime-person-det", "anime-person-det");
   ccipSession = await tryLoad(modelsDir, "ccip", "ccip");
@@ -130,6 +132,9 @@ export function hasCcip(): boolean {
 }
 export function hasArcFace(): boolean {
   return arcfaceSession !== null && faceDetSession !== null;
+}
+export function hasFaceVerifier(): boolean {
+  return faceVerifierSession !== null;
 }
 
 // ============================================================
@@ -433,50 +438,56 @@ export function alignFace(raw: RawImage, landmarks: number[]): Buffer {
   return out;
 }
 
-/**
- * 정합된 얼굴에서 ArcFace 임베딩 추출. 원본과 좌우반전을 각각 임베딩해
- * L2 정규화 후 평균한다(flip TTA) - 얼굴인식의 표준 기법으로 포즈 편향을 줄인다.
- */
+/** 두 얼굴 모델은 같은 RGB 112×112 정합 이미지와 입력 정규화를 사용한다. */
+function faceTensor(aligned: Buffer, flip: boolean): ort.Tensor {
+  const px = ARCFACE_SIZE * ARCFACE_SIZE;
+  const arr = new Float32Array(3 * px);
+  for (let y = 0; y < ARCFACE_SIZE; y++) {
+    for (let x = 0; x < ARCFACE_SIZE; x++) {
+      const sx = flip ? ARCFACE_SIZE - 1 - x : x;
+      const si = (y * ARCFACE_SIZE + sx) * 3;
+      const di = y * ARCFACE_SIZE + x;
+      for (let c = 0; c < 3; c++) arr[c * px + di] = (aligned[si + c] - 127.5) / 127.5;
+    }
+  }
+  return new ort.Tensor("float32", arr, [1, 3, ARCFACE_SIZE, ARCFACE_SIZE]);
+}
+
+function normalizedFaceVector(v: Float32Array): Float32Array {
+  let s = 0;
+  for (let i = 0; i < v.length; i++) s += v[i] * v[i];
+  s = Math.sqrt(s) || 1;
+  const out = new Float32Array(v.length);
+  for (let i = 0; i < v.length; i++) out[i] = v[i] / s;
+  return out;
+}
+
+/** 원본과 좌우반전 임베딩을 각각 정규화한 뒤 평균해 포즈 편향을 줄인다. */
 export async function extractFaceEmbedding(aligned: Buffer): Promise<Float32Array | null> {
   if (!arcfaceSession) return null;
 
-  const px = ARCFACE_SIZE * ARCFACE_SIZE;
-  const makeTensor = (flip: boolean): ort.Tensor => {
-    const arr = new Float32Array(3 * px);
-    for (let y = 0; y < ARCFACE_SIZE; y++) {
-      for (let x = 0; x < ARCFACE_SIZE; x++) {
-        const sx = flip ? ARCFACE_SIZE - 1 - x : x;
-        const si = (y * ARCFACE_SIZE + sx) * 3;
-        const di = y * ARCFACE_SIZE + x;
-        for (let c = 0; c < 3; c++) arr[c * px + di] = (aligned[si + c] - 127.5) / 127.5;
-      }
-    }
-    return new ort.Tensor("float32", arr, [1, 3, ARCFACE_SIZE, ARCFACE_SIZE]);
-  };
-
   const name = arcfaceSession.inputNames[0];
   const [r1, r2] = await Promise.all([
-    arcfaceSession.run({ [name]: makeTensor(false) }),
-    arcfaceSession.run({ [name]: makeTensor(true) }),
+    arcfaceSession.run({ [name]: faceTensor(aligned, false) }),
+    arcfaceSession.run({ [name]: faceTensor(aligned, true) }),
   ]);
 
   const e1 = r1[arcfaceSession.outputNames[0]].data as Float32Array;
   const e2 = r2[arcfaceSession.outputNames[0]].data as Float32Array;
 
-  const norm = (v: Float32Array) => {
-    let s = 0;
-    for (let i = 0; i < v.length; i++) s += v[i] * v[i];
-    s = Math.sqrt(s) || 1;
-    const o = new Float32Array(v.length);
-    for (let i = 0; i < v.length; i++) o[i] = v[i] / s;
-    return o;
-  };
-
-  const n1 = norm(e1);
-  const n2 = norm(e2);
+  const n1 = normalizedFaceVector(e1);
+  const n2 = normalizedFaceVector(e2);
   const out = new Float32Array(n1.length);
   for (let i = 0; i < n1.length; i++) out[i] = (n1[i] + n2[i]) / 2;
   return out;
+}
+
+/** 독립 학습된 얼굴 모델로 후보 신원을 확인한다. 비교는 같은 모델의 승인된 얼굴 갤러리와만 한다. */
+export async function extractFaceVerifierEmbedding(aligned: Buffer): Promise<Float32Array | null> {
+  if (!faceVerifierSession) return null;
+  const name = faceVerifierSession.inputNames[0];
+  const result = await faceVerifierSession.run({ [name]: faceTensor(aligned, false) });
+  return normalizedFaceVector(result[faceVerifierSession.outputNames[0]].data as Float32Array);
 }
 
 /**

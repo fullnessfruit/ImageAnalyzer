@@ -42,12 +42,14 @@ async function main() {
     }
   }
 
-  // These negative-for-あぐり images also contain real words that must stay detectable.
-  for (const [file, keyword] of [
+  // Rejecting あぐり must not suppress actual words on the same negative images.
+  for (const [filename, keyword] of [
     ["HRWKnRBW4AUg9iL.jpg", "アクリル"],
     ["HRf_zQybUAAnIqU.png", "めぐり"],
+    ["HVIs0Kta8AEx4ZK.jpg", "アクリル"],
+    ["HUu0SMKaYAASTg6.jpg", "アクリル"],
   ]) {
-    const image = path.join(sampleDir, "keyword-absent", "あぐり", file);
+    const image = path.join(sampleDir, "keyword-absent", "あぐり", filename);
     if (fs.existsSync(image)) await check(image, keyword, true);
   }
 

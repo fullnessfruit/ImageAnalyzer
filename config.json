@@ -4,6 +4,9 @@
     "faceWeak": 0.28,
     "faceWeakByName": { "大西亜玖璃": 0.49, "楡井希実": 0.32 },
     "facePose": 0.5,
+    "faceVerify": 0.575,
+    "faceVerifyPose": 0.52,
+    "faceVerifyBelow": 0.6,
     "character": 0.85,
     "costume": 0.52
   },

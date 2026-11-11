@@ -511,6 +511,10 @@
       "absentCostumes": ["上原歩夢"],
       "imageNotes": "실사 인물이 사과 제품 상자를 든 사진. 등록된 인물·캐릭터·의상은 없다."
     },
+    "HV3Xb71akAAIqN_.jpg": {
+      "absentNames": ["楡井希実"],
+      "imageNotes": "Lets_chikochiko 게시물 2116084293936291917의 두 사람 셀카. 오른쪽 얼굴이 楡井希実로 잘못 보고됐다."
+    },
     "HVHrU8Ea0AA6-hf.jpg": {
       "characters": ["高坂穂乃果", "絢瀬絵里", "南ことり", "園田海未", "星空凛", "西木野真姫", "東條希", "小泉花陽", "矢澤にこ", "高海千歌", "桜内梨子", "松浦果南", "黒澤ダイヤ", "渡辺曜", "津島善子", "国木田花丸", "小原鞠莉", "黒澤ルビィ"],
       "absentNames": ["大西亜玖璃", "楡井希実", "上原歩夢"],
@@ -535,6 +539,30 @@
       "absentCostumes": ["上原歩夢"],
       "absentOcr": ["あぐり"],
       "imageNotes": "おにいちゃんはおしまい！ 팝업숍 안내. 등록된 인물·캐릭터·의상과 あぐり 표기는 없다."
+    },
+    "HWADp7haYAAUJO_.jpg": {
+      "people": ["大西亜玖璃"],
+      "faceChecks": ["大西亜玖璃"],
+      "subjectNotes": { "大西亜玖璃": "왼쪽 잡지의 왼쪽 아래 특전 안내에 실린 네 인물 중 왼쪽 위 작은 얼굴." },
+      "imageNotes": "akiba_gema 게시물 2116696734407737833. 사용자가 大西亜玖璃 등장 사실을 확인했다."
+    },
+    "HWADrAhbIAAsd8U.jpg": {
+      "people": ["大西亜玖璃"],
+      "faceChecks": ["大西亜玖璃"],
+      "subjectNotes": { "大西亜玖璃": "네 인물 사진 중 왼쪽 위. HWADp7haYAAUJO_.jpg의 특전 안내를 크게 보여 준다." },
+      "imageNotes": "akiba_gema 게시물의 특전 안내 이미지. 사용자가 大西亜玖璃 등장 사실을 확인했다."
+    },
+    "HWADrgobgAA5E55.jpg": {
+      "absentNames": ["大西亜玖璃"],
+      "imageNotes": "같은 akiba_gema 게시물의 LoveLive!Days 15주년 특전 안내. 사진 인물은 없고 캐릭터 일러스트만 있다."
+    },
+    "HWADsFZaAAAlB2I.jpg": {
+      "absentNames": ["大西亜玖璃"],
+      "imageNotes": "같은 akiba_gema 게시물의 LoveLive!Days 15주년 상품 진열. 사진 인물은 없고 캐릭터 일러스트만 있다."
+    },
+    "HWFe9z9awAAOhV_.jpg": {
+      "absentNames": ["大西亜玖璃"],
+      "imageNotes": "oricon 게시물 2117077847433220192와 2117079049831067947에서 같은 사진이 반복 분석됐다. 크리스마스 행사 사진의 인물이 大西亜玖璃로 잘못 보고됐다."
     },
     "HUp1LOHaIAEkx3X.jpg": {
       "absent": "allCatalogedSubjects"
@@ -990,7 +1018,66 @@
         "櫻井希実"
       ],
       "imageNotes": "蓮ノ空 CD 예약 안내. 작은 출연자 명단에 日野下花帆(CV.楡井希実)가 있고 櫻井希実 표기는 없다."
+    },
+    "keyword-absent/あぐり/HVIs0Kta8AEx4ZK.jpg": {
+      "absentOcr": ["あぐり"],
+      "imageNotes": "루트의 같은 이름 이미지와 같은 바이트. おにまい 상품 안내에 あぐり 표기는 없다."
+    },
+    "keyword-absent/あぐり/HVIsytPaAAAvC-k.jpg": {
+      "absentOcr": ["あぐり"],
+      "imageNotes": "루트의 같은 이름 이미지와 같은 바이트. おにまい 팝업숍 안내에 あぐり 표기는 없다."
+    },
+    "keyword-absent/あぐり/HVRn6zxaEAAF7fB.jpg": {
+      "absentOcr": ["あぐり"],
+      "imageNotes": "おにまい 행사 상품 엽서 이미지에 あぐり 표기는 없다."
+    },
+    "keyword-absent/あぐり/HUu0SMKaYAASTg6.jpg": {
+      "absentOcr": ["あぐり"],
+      "ocr": ["アクリル"],
+      "imageNotes": "Raffle_info의 GUILTY GEAR 경품 안내. アクリル 표기는 여러 번 있으나 あぐり는 없다."
+    },
+    "x-investigation/images/2119611179165503856_HWV-qD6aAAA1qlC.jpg": {
+      "absentOcr": ["あぐり"],
+      "imageNotes": "새 gamers_no_gema 게시물의 おにまい 팝업숍 안내. 이전 HVRn4G6bIAAyv4M.jpg와 바이트가 같다."
+    },
+    "x-investigation/images/2119611179165503856_HWV-xTDbIAAhFlU.jpg": {
+      "absentOcr": ["あぐり"],
+      "ocr": ["アクリル"],
+      "imageNotes": "새 gamers_no_gema 게시물의 おにまい 상품 안내. 이전 HVRn463aUAAmV38.jpg와 바이트가 같다."
+    },
+    "x-investigation/images/2119611179165503856_HWV-yBOaMAAJkyI.jpg": {
+      "absentOcr": ["あぐり"],
+      "imageNotes": "새 gamers_no_gema 게시물의 구매 특전 안내. あぐり 표기는 없다."
+    },
+    "x-investigation/images/2119626028645585104_HUu0SMKaYAASTg6.jpg": {
+      "absentOcr": ["あぐり"],
+      "ocr": ["アクリル"],
+      "imageNotes": "Raffle_info의 GUILTY GEAR 경품 안내 원본. keyword-absent/あぐり/의 같은 이름 이미지와 바이트가 같다."
     }
   },
-  "unlabeledImages": []
+  "unlabeledImages": [
+    "x-investigation/contact-sheet.jpg",
+    "x-investigation/images/2113192417767886929_HVOA7X-bEAAo7B1.jpg",
+    "x-investigation/images/2113192417767886929_HVOA7s2a0AEkvs2.jpg",
+    "x-investigation/images/2113216294573220236_HVNVW3cbAAAfDm5.jpg",
+    "x-investigation/images/2113231392025035050_HVNW2xzaMAAvfV_.jpg",
+    "x-investigation/images/2113238949975982357_HVWeZyMrcd0DqgHq.jpg",
+    "x-investigation/images/2113246490738999476_HVNZ-xpaEAAtW1s.jpg",
+    "x-investigation/images/2113276690873102740_HVOAhWJakAA8NtK.jpg",
+    "x-investigation/images/2113291790568546361_HVNhYs5bsAAuwrR.jpg",
+    "x-investigation/images/2113306890289696874_HVO92yHa0AAf-vm.jpg",
+    "x-investigation/images/2113306890289696874_HVO958ZacAAMxCF.jpg",
+    "x-investigation/images/2113306890289696874_HVO9oJHa8AE2qbY.jpg",
+    "x-investigation/images/2113306890289696874_HVO9vFMa8AAqL9H.jpg",
+    "x-investigation/images/2113376852240896447_HVQ2DvHa0AANE_B.jpg",
+    "x-investigation/images/2113412589480734840_HVNcmiJaAAAQoEi.jpg",
+    "x-investigation/images/2113412589480734840_HVNcmiLb0AAbuqx.jpg",
+    "x-investigation/images/2113442785332498808_HVRPC0PacAAM0k_.jpg",
+    "x-investigation/images/2113442785332498808_HVRPFQwaYAAFQnq.jpg",
+    "x-investigation/images/2113442785332498808_HVRPKrya8AApqVB.jpg",
+    "x-investigation/images/2113442785332498808_HVRPOYgbAAAIQbk.jpg",
+    "x-investigation/images/2113450341257687233_HVRn463aUAAmV38.jpg",
+    "x-investigation/images/2113450341257687233_HVRn4G6bIAAyv4M.jpg",
+    "x-investigation/images/2113450341257687233_HVRn6zxaEAAF7fB.jpg"
+  ]
 }

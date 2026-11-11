@@ -12,6 +12,7 @@
     "server": "npm run build && node server/dist/index.js",
     "server:ocr": "npm run build && node server/dist/index.js --ocr-only",
     "worker": "npm run build && node server/dist/worker.js",
+    "worker:status": "node scripts/worker-status.cjs --watch",
     "dev": "npx nodemon --watch server/src --ext ts --exec \"npm run build && node server/dist/index.js\"",
     "analyze": "npx ts-node scripts/analyze.ts",
     "register:all": "npx ts-node scripts/register.ts all",
