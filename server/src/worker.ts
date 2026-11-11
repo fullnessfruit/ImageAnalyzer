@@ -32,6 +32,7 @@ import path from "path";
 import nodeCrypto from "crypto";
 import { execFile } from "child_process";
 import { promisify } from "util";
+import { gzip as gzipCallback } from "zlib";
 
 import { ensureModelsDownloaded } from "./model-downloader";
 import { initOCR, parseSearchLists, parseKeywordBlocks, performOCR, KeywordBlock } from "./ocr";
@@ -40,6 +41,7 @@ import { appendAnalysisLog, summarizeAnalysisError } from "./analysis-log";
 import { JobImageCache, TimedImageResultCache } from "./job-image-cache";
 
 const execFileAsync = promisify(execFile);
+const gzip = promisify(gzipCallback);
 
 const MODELS_DIR = path.join(PROJECT_ROOT, "models");
 
@@ -47,6 +49,8 @@ const BROKER_URL = (process.env.OCR_BROKER_URL || "http://localhost:3100").repla
 const BROKER_SECRET: string = require(path.join(PROJECT_ROOT, "scripts/shared-secret.cjs")).readSecret();
 const INTERVAL_MS = Number(process.env.OCR_WORKER_INTERVAL_MS || 60000);
 const WORKER_ID = process.env.OCR_WORKER_ID || `imageanalyzer-${process.pid}`;
+const BROKER_RESPONSE_MAX_BYTES = 8 * 1024 * 1024;
+let brokerAcceptsGzip = false;
 // Vision work is opt-in; an OCR-only setting always wins over --all.
 const FULL_MODE = process.argv.includes("--all") && !process.argv.includes("--ocr-only") && process.env.IMAGEANALYZER_OCR_ONLY !== "1";
 const ocrResultCache = new TimedImageResultCache<Awaited<ReturnType<typeof performOCR>>>();
@@ -126,8 +130,8 @@ interface Job {
  * 이 형식은 브로커(ocr-broker/server.js)와 확장(ocr-queue-client.js)에도 동일하게 있다.
  * 리포가 다른 별개 배포물이라 코드로 공유할 수 없으니 어긋나면 안 된다.
  */
-function sha256Hex(text: string): string {
-  return nodeCrypto.createHash("sha256").update(text, "utf8").digest("hex");
+function sha256Hex(text: string | Buffer): string {
+  return nodeCrypto.createHash("sha256").update(text).digest("hex");
 }
 
 function hmacHex(payload: string): string {
@@ -137,34 +141,68 @@ function hmacHex(payload: string): string {
 /** 브로커가 돌려준 HTTP status를 실은 에러. 호출자가 409를 메시지 파싱 없이 구분한다. */
 type BrokerError = Error & { status?: number };
 
+async function readBrokerBody(response: Response): Promise<Buffer> {
+  const reader = response.body?.getReader();
+  if (!reader) return Buffer.alloc(0);
+  const chunks: Buffer[] = [];
+  let size = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) return Buffer.concat(chunks, size);
+      size += value.byteLength;
+      if (size > BROKER_RESPONSE_MAX_BYTES) {
+        await reader.cancel();
+        throw new Error("broker response too large (> 8 MiB decoded)");
+      }
+      chunks.push(Buffer.from(value.buffer, value.byteOffset, value.byteLength));
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 async function brokerFetch(pathname: string, init: RequestInit = {}): Promise<any> {
   const method = (init.method || "GET").toUpperCase();
   const bodyText = typeof init.body === "string" ? init.body : "";
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  let body = Buffer.from(bodyText, "utf8");
+  const headers: Record<string, string> = { "Content-Type": "application/json", "Accept-Encoding": "gzip" };
+  if (brokerAcceptsGzip && body.length >= 1024) {
+    const compressed = await gzip(body, { level: 1 });
+    if (body.length - compressed.length >= Math.max(64, Math.ceil(body.length * 0.05))) {
+      body = compressed;
+      headers["Content-Encoding"] = "gzip";
+    }
+  }
 
   let nonce = "";
   if (BROKER_SECRET) {
     const ts = String(Date.now());
     nonce = nodeCrypto.randomBytes(12).toString("hex");
-    const payload = [method, pathname, ts, nonce, sha256Hex(bodyText)].join("\n");
+    const payload = [method, pathname, ts, nonce, sha256Hex(body)].join("\n");
     headers["Authorization"] = `OCR1 ts=${ts},nonce=${nonce},sig=${hmacHex(payload)}`;
   }
 
   const response = await fetch(`${BROKER_URL}${pathname}`, {
     ...init,
+    body: init.body === undefined || init.body === null ? undefined : body,
     headers: { ...headers, ...(init.headers as Record<string, string> | undefined) },
+    redirect: "error",
   });
 
-  // 텍스트로 읽어 받은 바이트 그대로 서명을 검증한다.
-  const text = await response.text();
+  // Fetch decodes HTTP gzip before exposing the body. Verify those original JSON
+  // bytes; request signatures instead cover the bytes uploaded on the wire.
+  const responseBody = await readBrokerBody(response);
 
   // /health는 설계상 서명이 없다 (handshake이며 그것으로 아무것도 신뢰하지 않는다).
   if (BROKER_SECRET && nonce && pathname !== "/health") {
-    if (response.headers.get("x-ocr-signature") !== hmacHex(`${nonce}\n${sha256Hex(text)}`)) {
+    if (response.headers.get("x-ocr-signature") !== hmacHex(`${nonce}\n${sha256Hex(responseBody)}`)) {
       throw new Error("response signature mismatch (브로커가 보낸 응답이 아니다)");
     }
+    brokerAcceptsGzip = (response.headers.get("accept-encoding") || "").split(",").some(value => value.trim().toLowerCase() === "gzip");
   }
 
+  const text = responseBody.toString("utf8");
   if (!response.ok) {
     const err = new Error(`HTTP ${response.status}${text ? ` ${text.slice(0, 200)}` : ""}`) as BrokerError;
     err.status = response.status;
