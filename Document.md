@@ -732,7 +732,7 @@ CLI도 실패를 보고한다. `summarizeAnalysisError()`는 원인 체인의 �
 보관한다. URL 문자열이 달라도 바이트가 같으면 첫 결과를 재사용하며, 실패한 추론은 보관하지
 않아 job 재시도 시 다시 분석한다. 캐시는 job마다 새로 만든다.
 `TimedImageResultCache`는 프로세스가 살아 있는 동안 성공한 결과를 **정확히 같은 URL과 분석
-입력 키**로 24시간 보관한다. OCR 키에는 검색 목록·제외어·OCR 설정이 들어가고, 이미지 분석
+입력 키**로 일주일 보관한다. OCR 키에는 검색 목록·제외어·OCR 설정이 들어가고, 이미지 분석
 키에는 요청 이름·설정·SQLite `PRAGMA data_version`이 들어간다. 검색 목록이나 임계값이
 바뀌거나 외부 등록으로 갤러리가 갱신되면 다른 키가 되어 옛 판정을 반환하지 않는다.
 요청 시 만료를 확인하고 한 시간마다 만료 항목을 제거한다. URL·결과·해시·바이트 수만 보관하며
@@ -773,7 +773,7 @@ CLI도 실패를 보고한다. `summarizeAnalysisError()`는 원인 체인의 �
 검사한다. OCR 전용 모드는 이 얼굴 경로를 로드하지 않는다.
 `runJob()`은 각 URL을 처리하기 전에 job의 원본 TSV·키워드별 제외어·URL을 파일에 남긴다. 이미지별 제외 판정은 `detail[].excludedBy`에 기록하고 유효한 `matchedKeywords`를 합친다. 브로커에는 키워드 식별자와 `{imageUrl, keyword, terms}` 제외 근거도 올린다. URL 거부·
 다운로드 실패·OCR 실패·성공을 같은 `attemptId`와 `imageIndex`의 결과 행으로 기록한다.
-`runJob()`과 `runVisionJob()`은 허용 URL을 확인한 뒤 24시간 URL 캐시를 먼저 조회한다.
+`runJob()`과 `runVisionJob()`은 허용 URL을 확인한 뒤 일주일 URL 캐시를 먼저 조회한다.
 같은 URL·검색 조건 또는 요청 이름·설정·갤러리 버전의 성공 결과가 있으면 이미지 다운로드와
 추론을 모두 생략하며 `status: "cached"`를 기록한다. 미스일 때만 다운로드·해시 계산 후 job별
 `JobImageCache`를 조회한다. 같은 바이트의 다른 URL도 요청/결과 행은 각각 남기되, 두 번째부터
@@ -984,7 +984,7 @@ HTTP와 같은 로그 함수로 남긴다. `mode: "cli"`로 운용 워커 기록
 ### tests/analysis-log.test.cjs / tests/inference-crop.test.cjs / tests/job-image-cache.test.cjs
 **역할**: UTC 파일·행 시각과 요청/결과의 연결, 이미지 경계를 넘는 사람 박스에서 의상
 마스크 합성이 성공하는지, 서로 다른 URL의 동일 바이트가 한 job에서 한 번만 추론되면서
-실패한 추론은 재시도 가능한지, URL 결과가 동일 분석 입력에서만 24시간 재사용되고
+실패한 추론은 재시도 가능한지, URL 결과가 동일 분석 입력에서만 일주일 재사용되고
 만료 항목은 제거되는지를 각각 확인한다.
 
 ### scripts/shared-secret.cjs / setup.bat / setup.sh

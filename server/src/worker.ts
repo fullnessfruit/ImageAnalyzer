@@ -478,7 +478,7 @@ async function runJob(job: Job, attemptId: string) {
       elapsedMs: Date.now() - started,
     });
     console.log(
-      `Image analyzed - jobId: ${job.jobId}, image: ${imageIndex + 1}/${job.imageUrls.length}, url: ${url}, ms: ${Date.now() - started}, regions: ${result.regions}, found: ${result.found.length}, source: ${cached ? "24h-url-cache" : reusedFromImageUrl ? "job-image-cache" : "inference"}, reusedFrom: ${reusedFromImageUrl || "none"}`,
+      `Image analyzed - jobId: ${job.jobId}, image: ${imageIndex + 1}/${job.imageUrls.length}, url: ${url}, ms: ${Date.now() - started}, regions: ${result.regions}, found: ${result.found.length}, source: ${cached ? "7d-url-cache" : reusedFromImageUrl ? "job-image-cache" : "inference"}, reusedFrom: ${reusedFromImageUrl || "none"}`,
     );
   }
 
@@ -549,7 +549,7 @@ async function runVisionJob(job: Job, attemptId: string) {
     matches.push(...result.map(match => ({ ...match, imageUrl: url })));
     appendAnalysisLog({ event: "image_result", ...imageRef, status: cached ? "cached" : reusedFromImageUrl ? "reused" : "analyzed", imageSha256,
       reusedFromImageUrl, bytes, names, matches: result, elapsedMs: Date.now() - started });
-    console.log(`Image analyzed - jobId: ${job.jobId}, image: ${imageIndex + 1}/${job.imageUrls.length}, url: ${url}, ms: ${Date.now() - started}, matches: ${result.length}, source: ${cached ? "24h-url-cache" : reusedFromImageUrl ? "job-image-cache" : "inference"}`);
+    console.log(`Image analyzed - jobId: ${job.jobId}, image: ${imageIndex + 1}/${job.imageUrls.length}, url: ${url}, ms: ${Date.now() - started}, matches: ${result.length}, source: ${cached ? "7d-url-cache" : reusedFromImageUrl ? "job-image-cache" : "inference"}`);
   }
   const error = names.length > 0 && fetched === 0 ? `none of ${job.imageUrls.length} images could be fetched` : null;
   return { found: foundNames(matches, names, registeredKinds()), regions: 0, error, matches, skippedNames, warnings };
