@@ -339,7 +339,14 @@ async function fetchImageOnce(url: string): Promise<Buffer> {
         url = new URL(response.headers.get("location")!, url).href;
         continue;
       }
-      if (!response.ok || !response.body) throw new Error(`HTTP ${response.status}`);
+      if (!response.ok || !response.body) {
+        await response.body?.cancel();
+        throw new Error(`HTTP ${response.status}`);
+      }
+      if (Number(response.headers.get("content-length")) > 32 * 1024 * 1024) {
+        await response.body.cancel();
+        throw new Error("image exceeds 32 MiB");
+      }
       const reader = response.body.getReader();
       const parts: Buffer[] = [];
       let size = 0;
@@ -349,12 +356,13 @@ async function fetchImageOnce(url: string): Promise<Buffer> {
           if (done) break;
           size += value.byteLength;
           if (size > 32 * 1024 * 1024) throw new Error("image exceeds 32 MiB");
-          parts.push(Buffer.from(value));
+          parts.push(Buffer.from(value.buffer, value.byteOffset, value.byteLength));
         }
       } finally {
-        await reader.cancel();
+        await reader.cancel().catch(() => {});
+        reader.releaseLock();
       }
-      return Buffer.concat(parts);
+      return parts.length === 1 ? parts[0] : Buffer.concat(parts, size);
     }
     throw new Error("too many image redirects");
   } finally {
@@ -414,6 +422,7 @@ async function runJob(job: Job, attemptId: string) {
       jobId: job.jobId,
       postUrl: job.postUrl,
       imageIndex,
+      imageCount: job.imageUrls.length,
       imageUrl: url,
     };
     // 요청 자체를 먼저 남긴다. 다운로드나 OCR이 실패해도 당시 URL과 전체 TSV를 잃지 않는다.
@@ -469,7 +478,7 @@ async function runJob(job: Job, attemptId: string) {
       elapsedMs: Date.now() - started,
     });
     console.log(
-      `Image analyzed - jobId: ${job.jobId}, url: ${url}, ms: ${Date.now() - started}, regions: ${result.regions}, found: ${result.found.length}, source: ${cached ? "24h-url-cache" : reusedFromImageUrl ? "job-image-cache" : "inference"}, reusedFrom: ${reusedFromImageUrl || "none"}`,
+      `Image analyzed - jobId: ${job.jobId}, image: ${imageIndex + 1}/${job.imageUrls.length}, url: ${url}, ms: ${Date.now() - started}, regions: ${result.regions}, found: ${result.found.length}, source: ${cached ? "24h-url-cache" : reusedFromImageUrl ? "job-image-cache" : "inference"}, reusedFrom: ${reusedFromImageUrl || "none"}`,
     );
   }
 
@@ -497,7 +506,7 @@ async function runVisionJob(job: Job, attemptId: string) {
   const analysisKey = JSON.stringify([names.slice().sort(), cfg, galleryRevision]);
   for (const [imageIndex, url] of job.imageUrls.entries()) {
     const imageRef = { mode: "worker" as const, kind: "image" as const, workerId: WORKER_ID,
-      attemptId, jobId: job.jobId, postUrl: job.postUrl, imageIndex, imageUrl: url };
+      attemptId, jobId: job.jobId, postUrl: job.postUrl, imageIndex, imageCount: job.imageUrls.length, imageUrl: url };
     appendAnalysisLog({ event: "image_request", ...imageRef, requestedNames: job.names, names, skippedNames });
     if (!names.length) {
       appendAnalysisLog({ event: "image_result", ...imageRef, status: "no_registered_names" });
@@ -540,6 +549,7 @@ async function runVisionJob(job: Job, attemptId: string) {
     matches.push(...result.map(match => ({ ...match, imageUrl: url })));
     appendAnalysisLog({ event: "image_result", ...imageRef, status: cached ? "cached" : reusedFromImageUrl ? "reused" : "analyzed", imageSha256,
       reusedFromImageUrl, bytes, names, matches: result, elapsedMs: Date.now() - started });
+    console.log(`Image analyzed - jobId: ${job.jobId}, image: ${imageIndex + 1}/${job.imageUrls.length}, url: ${url}, ms: ${Date.now() - started}, matches: ${result.length}, source: ${cached ? "24h-url-cache" : reusedFromImageUrl ? "job-image-cache" : "inference"}`);
   }
   const error = names.length > 0 && fetched === 0 ? `none of ${job.imageUrls.length} images could be fetched` : null;
   return { found: foundNames(matches, names, registeredKinds()), regions: 0, error, matches, skippedNames, warnings };
