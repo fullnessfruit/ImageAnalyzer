@@ -25,7 +25,7 @@ export class TimedImageResultCache<T> {
     expiresAt: number;
   }>();
 
-  constructor(private readonly ttlMs = 24 * 60 * 60 * 1000, private readonly now = Date.now) {}
+  constructor(private readonly ttlMs = 7 * 24 * 60 * 60 * 1000, private readonly now = Date.now) {}
 
   get(url: string, analysisKey: string): { result: T; imageSha256: string; bytes: number } | undefined {
     const key = JSON.stringify([url, analysisKey]);

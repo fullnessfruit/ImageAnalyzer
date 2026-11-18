@@ -39,9 +39,9 @@ test('failed analysis is retried for a duplicate image', async () => {
   assert.equal(calls, 2);
 });
 
-test('URL results are reused for 24 hours only with the same analysis inputs', () => {
+test('URL results are reused for seven days only with the same analysis inputs', () => {
   let now = 1000;
-  const cache = new TimedImageResultCache(24 * 60 * 60 * 1000, () => now);
+  const cache = new TimedImageResultCache(undefined, () => now);
   const url = 'https://pbs.twimg.com/media/example.jpg';
   const result = { found: ['大西亜玖璃'] };
   cache.set(url, 'search=A;threshold=0.5', result, 'hash-a', 123);
@@ -51,6 +51,10 @@ test('URL results are reused for 24 hours only with the same analysis inputs', (
   assert.equal(cache.get(url, 'search=A;threshold=0.6'), undefined);
   assert.equal(cache.get(`${url}:large`, 'search=A;threshold=0.5'), undefined);
   now += 24 * 60 * 60 * 1000;
+  assert.ok(cache.get(url, 'search=A;threshold=0.5'));
+  now += 6 * 24 * 60 * 60 * 1000 - 1;
+  assert.ok(cache.get(url, 'search=A;threshold=0.5'));
+  now++;
   assert.equal(cache.get(url, 'search=A;threshold=0.5'), undefined);
 });
 
