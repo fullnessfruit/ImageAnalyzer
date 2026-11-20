@@ -140,7 +140,7 @@ result without downloading the image. Changed OCR settings or a changed gallery 
 Cache hits still write request and result log lines with `status: "cached"`; restarting the worker clears
 the cache.
 Workers also write `broker_poll` lines for the first claim, connection failures, recovery, and every
-10 minutes while the queue stays empty. Broker requests time out after 30 seconds, then the worker
+10 minutes while the queue stays empty. Broker requests time out after 60 seconds, then the worker
 tries again at its next polling interval without a retry limit. A newly started worker prints one
 console line when each job starts and ends, and an idle status line about once per minute.
 The log files are ignored by Git and are not deleted automatically. For example, search them with
