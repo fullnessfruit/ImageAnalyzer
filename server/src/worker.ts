@@ -51,7 +51,7 @@ const INTERVAL_MS = Number(process.env.OCR_WORKER_INTERVAL_MS || 60000);
 const WORKER_ID = process.env.OCR_WORKER_ID || `imageanalyzer-${process.pid}`;
 // Broker requests carry JSON rather than media bytes. Bound connection and body reads so a
 // stalled socket cannot hold the single polling loop forever.
-const BROKER_REQUEST_TIMEOUT_MS = 30000;
+const BROKER_REQUEST_TIMEOUT_MS = 60000;
 const BROKER_RESPONSE_MAX_BYTES = 8 * 1024 * 1024;
 let brokerAcceptsGzip = false;
 const BROKER_IDLE_LOG_INTERVAL_MS = 10 * 60 * 1000;
