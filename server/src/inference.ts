@@ -347,6 +347,46 @@ export async function detectFaces(imageBuffer: Buffer, confThreshold = 0.5): Pro
   return nms(detections, 0.4);
 }
 
+/**
+ * 원본에서 위치가 확인됐지만 40px 품질 게이트에 걸린 얼굴만 주변 문맥과 함께 확대한다.
+ * 확대 영역에서 다시 찾은 얼굴의 중심이 원래 박스에 가까워야 같은 사람의 재검사로 인정한다.
+ * 반환한 raw와 랜드마크는 같은 확대 좌표계라 기존 alignFace()를 그대로 쓸 수 있다.
+ */
+export async function redetectSmallFace(raw: RawImage, original: Detection): Promise<{ raw: RawImage; detection: Detection } | null> {
+  if (!original.landmarks) return null;
+  const [x, y, w, h] = original.box;
+  if (![x, y, w, h].every(Number.isFinite) || w <= 0 || h <= 0) return null;
+  const scale = 2;
+  const side = Math.ceil(Math.max(w, h) * 2.5);
+  const cx = x + w / 2;
+  const cy = y + h / 2;
+  const rect = cropRectangle([cx - side / 2, cy - side / 2, side, side], raw.width, raw.height);
+  const crop = await sharp(raw.data, { raw: { width: raw.width, height: raw.height, channels: 3 } })
+    .extract(rect).raw().toBuffer();
+  // sharp는 resize와 extract의 체이닝 순서를 바꿀 수 있으므로 크롭을 먼저 완성한다.
+  const enlarged = await sharp(crop, { raw: { width: rect.width, height: rect.height, channels: 3 } })
+    .resize(rect.width * scale, rect.height * scale, { fit: "fill" })
+    .raw().toBuffer();
+  const enlargedRaw: RawImage = { data: enlarged, width: rect.width * scale, height: rect.height * scale };
+  const encoded = await sharp(enlarged, { raw: { width: enlargedRaw.width, height: enlargedRaw.height, channels: 3 } })
+    .png().toBuffer();
+  const expectedX = (cx - rect.left) * scale;
+  const expectedY = (cy - rect.top) * scale;
+  const maxDistance = Math.max(w, h) * scale / 2;
+  const nearby = (await detectFaces(encoded)).filter(det => {
+    if (!det.landmarks || det.box[2] < MIN_FACE_SIZE || det.box[3] < MIN_FACE_SIZE) return false;
+    const dx = det.box[0] + det.box[2] / 2 - expectedX;
+    const dy = det.box[1] + det.box[3] / 2 - expectedY;
+    return Math.hypot(dx, dy) <= maxDistance;
+  });
+  nearby.sort((a, b) => {
+    const distance = (det: Detection) => Math.hypot(det.box[0] + det.box[2] / 2 - expectedX,
+      det.box[1] + det.box[3] / 2 - expectedY);
+    return distance(a) - distance(b) || b.confidence - a.confidence;
+  });
+  return nearby.length ? { raw: enlargedRaw, detection: nearby[0] } : null;
+}
+
 // ============================================================
 // 얼굴 정합 (5점 유사변환)
 // ============================================================
