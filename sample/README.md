@@ -4,7 +4,7 @@
 
 `ocr`는 실제로 적혀 있고 회귀 검사에서 찾아야 하는 검색어다. `optionalOcr`는 적혀 있지만 현행 인식 실패를 허용하고, `absentOcr`는 **적혀 있지 않은** 검색어라 검출되면 실패다. `ocrText`는 검색어와 다른 실제 표기 또는 줄 배치를 설명한다. `imageNotes`는 파일 전체의 매체·촬영 상황·판정 범위를, `subjectNotes`는 대상별 뒷모습·옆얼굴·위치를 설명한다. `faceChecks`는 기존 얼굴 회귀 검사의 필수 성공 대상이며, `people`에 기록된 모든 사람이 곧바로 얼굴 검사의 필수 성공 대상이 되는 것은 아니다. 얼굴이 거의 보이지 않는 신체 판정 시험 이미지는 `faceCheck: "skip"`이다. `absentWeakFaces`는 해당 이름의 `facesWeak` 결과가 나와서는 안 된다는 얼굴별 검사다. 한 이미지에 실제 인물의 확정 얼굴과 다른 사람에게 붙은 같은 이름의 약한 오검출이 동시에 있을 수 있으므로 `faceChecks`와 함께 쓸 수 있다. 캐릭터 라벨도 실제 등장 여부를 기록하며, 현재 검사기는 누락을 진단 출력으로 남긴다. `absentNames`는 브로커의 이름별 `found` 결과에 나오면 안 되는 등록 이름이다. `absentCostumes`는 그 이미지에서 실제로 보이지 않는 등록 의상이며, 의상 매칭 자체를 검사해 오검출을 실패로 센다. 같은 이름의 캐릭터와 의상이 모두 있을 때도 두 결과를 별도로 확인한다.
 
-열다섯 이미지의 `absent: "allCatalogedSubjects"`는 `subjectCatalog.people`과 `subjectCatalog.characters`에 **이름이 전부 적힌 대상 모두**가 그 이미지에 없다는 뜻이다. 목록에는 QMa 이미지에서 OCR 텍스트로만 라벨링한 相良茉優·内田秀도 포함한다. 다른 미등록 인물·캐릭터나 텍스트까지 없다는 뜻은 아니다. `images`의 103장은 확인한 정보가 있는 부분 라벨이며, `unlabeledImages`의 23장은 X 게시물 조사용 사진·연락시트라 얼굴·캐릭터 정답을 아직 확정하지 않았다. 조사 기록은 `x-investigation/gamers-README.md`와 `x-investigation/current-README.md`에 있다. 이름이 없다는 이유만으로 그 인물이 부재한다고 해석해서는 안 된다.
+열다섯 이미지의 `absent: "allCatalogedSubjects"`는 `subjectCatalog.people`과 `subjectCatalog.characters`에 **이름이 전부 적힌 대상 모두**가 그 이미지에 없다는 뜻이다. 목록에는 QMa 이미지에서 OCR 텍스트로만 라벨링한 相良茉優·内田秀도 포함한다. 다른 미등록 인물·캐릭터나 텍스트까지 없다는 뜻은 아니다. `images`의 105장은 확인한 정보가 있는 부분 라벨이며, `unlabeledImages`의 23장은 X 게시물 조사용 사진·연락시트라 얼굴·캐릭터 정답을 아직 확정하지 않았다. 조사 기록은 `x-investigation/gamers-README.md`와 `x-investigation/current-README.md`에 있다. 이름이 없다는 이유만으로 그 인물이 부재한다고 해석해서는 안 된다.
 
 과거 Claude 세션 기록 2개와 현재 세션의 사용자 설명·실험 기록을 대조하고 실제 이미지를 확인했다. `HT8Ro88agAAdTWa.jpg`는 사용자가 大西亜玖璃라고 지정한 뒷모습 평가 이미지다. `c02.png`·`c02a.png`·`c02s.png`와 `chara_01_*`·`face_01_*`는 上原歩夢 일러스트이고, `c02cv.png`는 담당 성우 大西亜玖璃의 실사 얼굴이다. `G0e2w21aEAA6Ndl.png`·`HFEmpdcbAAAfbRb.jpg`와 위 캐릭터 참조 그림은 등록 갤러리에도 같은 파일이 있어 **독립 성능 평가에 쓰면 안 된다**. 과거 모델이 낸 이름만으로 정답을 만들지 않았고, 그 밖의 추가 사진은 실제 이미지의 인물·글자·위치를 확인해 기록했다. 확인하지 않은 다른 등장 인물의 신원은 비워 두었다.
 
@@ -19,7 +19,9 @@
 `XJt75abr9IYTRIQa.jpeg`에는 `Nijigasaki`가 휘어지고 흐릿한 작은 로고에 적혀 있지만 현재 OCR은 놓친다. 원본 분석 점수는 0.022, 더 높은 검출 스케일은 0.026, 로고 부분을 분리해 3배 확대한 실험은 0.022로 모두 판정 기준 0.5에 못 미쳤다. 이 단어를 `ocr` 필수 항목에 남겨 향후 개선 때 누락을 확인한다. 같은 이미지의 `虹ヶ咲`는 현재 검출된다.
 
 `HG-AYKEbAAAVL5o.jpg`의 일본어는 글자를 바로 세워 쌓은 세로쓰기다. 세로 열을 가로로 잘못 병합하지 않고 글자 칸 수 후보를 여럿 채점하면 OCR 검색어 8개가 모두 검출된다. `HUp3BAfbkAE98jj.jpg` 카드의 영문 이름은 단어 전체를 90도 돌려 적은 것으로, 조건부 270도 회전 검출에서 9개가 모두 검출된다. 두 번째 카드에 실제로 적힌 문자는 `AYASE ELI`이므로 OCR 라벨도 `Ayase Eli`다. `HUvY-rIbsAAA4Fk.jpg`의 비스듬한 장식 로고 `μ's`는 현재 약 0.045로 놓친다. 검출 박스는 나오지만 `μ` 글자의 격자 확률이 낮고, 로고 부분을 ±10~20도 회전해도 점수가 개선되지 않았다. 이 실제 표기는 `ocr` 필수 항목으로 남겨 누락을 추적한다. `absentNames`에 따른 아유무 신원 검사와 `absentCostumes`의 의상 오검출 검사는 OCR과 별도로 동작한다.
-OCR 양성·음성 라벨이 있는 32장을 같은 설정으로 재검사하면 남은 누락은 `HUvY-rIbsAAA4Fk.jpg`의 `μ's`와 `XJt75abr9IYTRIQa.jpeg`의 `Nijigasaki`뿐이며, `absentOcr` 오검출은 없다.
+앞서 검사한 OCR 양성·음성 32장에서는 `HUvY-rIbsAAA4Fk.jpg`의 `μ's`와 `XJt75abr9IYTRIQa.jpeg`의 `Nijigasaki`를 놓쳤고 `absentOcr` 오검출은 없었다. 이 수치는 현재 전체 라벨의 검사 결과를 뜻하지 않는다.
+
+`HXixfFPacAEn179.jpg`(2048×1536)와 `HXi_frxa4AAjDow.jpg`(1304×978)는 같은 ANIMAX 홍보 부스 사진의 해상도별 사본이다. 오른쪽 실물 크기 등신대의 얼굴은 大西亜玖璃 사진이며, 받침대에는 `大西亜玖璃`가 적혀 있다. 두 항목 모두 `people`·`faceChecks`·`ocr`에 정답으로 기록했다. 현재 모델은 고해상도본의 얼굴을 0.6074로, 저해상도본의 35×40px 얼굴을 확대 재검사해 0.5637로 확정한다. 두 장의 OCR은 여전히 놓친다. 정답 라벨은 현재 모델의 성공 여부에 따라 바꾸지 않는다.
 
 `HVHrU8Ea0AA6-hf.jpg`와 `HVHrYBSaEAAfF1o.jpg`에는 μ's·Aqours 각 아홉 명의 캐릭터 그림이 있다. 두 번째 진열 사진의 `渡辺曜` 배지는 아래쪽 오른쪽에서 세 번째로, 포장 반사와 흐림이 심하다. `HS9g4HvaUAA8-_w.jpg`·`HVEjx9aagAAZ9i4.jpg`·`HVDaSCVbAAAAj7N.jpg`와 두 おにまい 상품 이미지는 등록 인물·캐릭터·의상 부재 샘플이다. `HVIs0Kta8AEx4ZK.jpg`의 `アクリルカード`를 `あぐり`로 오인했던 OCR은 같은 글자 영역의 일본어 모델 대체 읽기로 기각한다. `HVIsytPaAAAvC-k.jpg`도 `あぐり` 부재 라벨을 둔다. `HVDaSCVbAAAAj7N.jpg`와 `HVEjx9aagAAZ9i4.jpg`의 다른 얼굴은 大西亜玖璃 점수 0.3064·0.4875를 냈지만 이름별 약한 하한 0.49에서 기각된다.
 

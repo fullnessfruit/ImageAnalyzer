@@ -13,6 +13,7 @@ const DATA_DIR = path.resolve(__dirname, "..", "..", "data");
 import {
   loadRaw,
   detectFaces,
+  redetectSmallFace,
   detectAnimeFaces,
   detectAnimePersons,
   detectionsInside,
@@ -105,7 +106,7 @@ export type AnalysisTargets = Partial<Record<Kind, ReadonlySet<string>>>;
 
 export interface AnalyzeResult {
   ocr: OcrResult;
-  /** 실물로 판정된 얼굴. */
+  /** 등록된 실사 인물의 얼굴. 사진·화면·등신대에 인쇄된 얼굴도 포함한다. */
   faces: Match[];
   /** 신원별 약한 하한 이상 face 미만. 원인과 무관하게 검토만 한다. */
   facesWeak: Match[];
@@ -150,6 +151,19 @@ async function recognizeFaces(
   const raw = await loadRaw(imageBuffer);
   const strong: Match[] = [];
   const weak: Match[] = [];
+  // 확인된 양성은 35px다. 30px 미만은 확대 판정 근거가 없어 제외하고 비용을 제한한다.
+  const MIN_SMALL_FACE_RECHECK_SIZE = 30;
+  const MAX_SMALL_FACE_RECHECK_SIDE = 60;
+  const MIN_SMALL_FACE_RECHECK_CONFIDENCE = 0.75;
+  const MAX_SMALL_FACE_RECHECKS = 8;
+  const smallFaces = faces.filter(det => det.landmarks && det.confidence >= MIN_SMALL_FACE_RECHECK_CONFIDENCE &&
+    Math.min(det.box[2], det.box[3]) >= MIN_SMALL_FACE_RECHECK_SIZE &&
+    Math.max(det.box[2], det.box[3]) <= MAX_SMALL_FACE_RECHECK_SIDE &&
+    (det.box[2] < MIN_FACE_SIZE || det.box[3] < MIN_FACE_SIZE));
+  const retryFaces = new Set(smallFaces.sort((a, b) => b.confidence - a.confidence).slice(0, MAX_SMALL_FACE_RECHECKS));
+  if (smallFaces.length > retryFaces.size) {
+    console.log(`[face-small] retry cap - eligible: ${smallFaces.length}, selected: ${retryFaces.size}`);
+  }
   const weakThresholdFor = (name: string): number => {
     const override = cfg.similarityThreshold.faceWeakByName?.[name];
     return typeof override === "number" && Number.isFinite(override) &&
@@ -159,15 +173,28 @@ async function recognizeFaces(
   };
 
   for (const det of faces) {
-    if (!det.landmarks || det.box[2] < MIN_FACE_SIZE || det.box[3] < MIN_FACE_SIZE) continue;
-    const extremePose = !faceQualityOk(det);
+    if (!det.landmarks) continue;
+    const small = det.box[2] < MIN_FACE_SIZE || det.box[3] < MIN_FACE_SIZE;
+    if (small && !retryFaces.has(det)) continue;
+    let recognitionRaw = raw;
+    let recognitionDet = det;
+    if (small) {
+      const started = Date.now();
+      const rescanned = await redetectSmallFace(raw, det);
+      const status = !rescanned ? "no-face" : faceQualityOk(rescanned.detection) ? "ready" : "pose-rejected";
+      console.log(`[face-small] recheck - originalBox: ${JSON.stringify(det.box.map(Math.round))}, enlargedBox: ${JSON.stringify(rescanned?.detection.box.map(Math.round) ?? null)}, status: ${status}, ms: ${Date.now() - started}`);
+      if (status !== "ready" || !rescanned) continue;
+      recognitionRaw = rescanned.raw;
+      recognitionDet = rescanned.detection;
+    }
+    const extremePose = !faceQualityOk(recognitionDet);
 
-    const aligned = alignFace(raw, det.landmarks);
+    const aligned = alignFace(recognitionRaw, recognitionDet.landmarks!);
     const embedding = await extractFaceEmbedding(aligned);
     if (!embedding) continue;
 
     // 측면·하향 얼굴은 5점 정합이 불안정하므로 더 높은 점수와 큰 신원 간격을 요구한다.
-    // 작은 얼굴은 이 예외로 통과시키지 않는다.
+    // 원본 작은 얼굴은 재검출 후에도 포즈 품질을 통과해야 이 경로에 들어온다.
     const best = matchGallery(
       embedding,
       gallery,
@@ -197,7 +224,7 @@ async function recognizeFaces(
       score: +best.score.toFixed(4),
       margin: +best.margin.toFixed(4),
       box: det.box.map(Math.round) as Box,
-      source: extremePose ? "arcface-pose" : undefined,
+      source: small ? "arcface-small" : extremePose ? "arcface-pose" : undefined,
     };
     if (extremePose) {
       // 등록기가 거르는 포즈다. 강한 증거가 있을 때 보고하되 갤러리 후보로 수집하지 않는다.
@@ -210,7 +237,8 @@ async function recognizeFaces(
       // 박스를 60% 넓혀 여유를 준 크롭을 남긴다.
       const [x, y, w, h] = det.box;
       const pad = 0.6;
-      await collectCandidate({
+      // 작은 원본 얼굴은 검토 후 등록해도 40px 게이트에서 탈락하므로 후보로 모으지 않는다.
+      if (!small) await collectCandidate({
         dataDir: DATA_DIR,
         kind: "face",
         space: "arcface",
