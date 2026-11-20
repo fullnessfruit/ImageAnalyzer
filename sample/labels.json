@@ -564,6 +564,22 @@
       "absentNames": ["大西亜玖璃"],
       "imageNotes": "oricon 게시물 2117077847433220192와 2117079049831067947에서 같은 사진이 반복 분석됐다. 크리스마스 행사 사진의 인물이 大西亜玖璃로 잘못 보고됐다."
     },
+    "HXi_frxa4AAjDow.jpg": {
+      "people": ["大西亜玖璃"],
+      "faceChecks": ["大西亜玖璃"],
+      "subjectNotes": { "大西亜玖璃": "사진 오른쪽의 실물 크기 등신대에 인쇄된 얼굴." },
+      "ocr": ["大西亜玖璃"],
+      "ocrText": { "大西亜玖璃": "오른쪽 등신대 받침대에 작게 인쇄된 이름." },
+      "imageNotes": "HXixfFPacAEn179.jpg와 같은 사진의 저해상도 사본(1304×978). 얼굴과 받침대 이름 모두 정답이다."
+    },
+    "HXixfFPacAEn179.jpg": {
+      "people": ["大西亜玖璃"],
+      "faceChecks": ["大西亜玖璃"],
+      "subjectNotes": { "大西亜玖璃": "사진 오른쪽의 실물 크기 등신대에 인쇄된 얼굴." },
+      "ocr": ["大西亜玖璃"],
+      "ocrText": { "大西亜玖璃": "오른쪽 등신대 받침대에 작게 인쇄된 이름." },
+      "imageNotes": "animaxmusixjp 게시물 2123642380876394619의 사진(2048×1536). HXi_frxa4AAjDow.jpg와 같은 장면의 고해상도본이다."
+    },
     "HUp1LOHaIAEkx3X.jpg": {
       "absent": "allCatalogedSubjects"
     },
